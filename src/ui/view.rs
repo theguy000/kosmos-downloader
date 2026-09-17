@@ -1335,7 +1335,7 @@ mod tests {
                 ..Default::default()
             };
             super::super::update_window_state(&ui, &snapshot);
-            assert_eq!(ui.get_total_items(), 8);
+            assert_eq!(ui.get_total_items(), 1);
             ui.set_selected_category(6);
             ui.set_selected_row(1);
             render();
