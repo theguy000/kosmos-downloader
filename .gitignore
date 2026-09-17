@@ -1,0 +1,21 @@
+# Cargo artifacts. Keep Cargo.lock for reproducible application builds.
+/target/
+**/*.rs.bk
+
+# Local agent state, not shared commands or configuration.
+/.kilo/worktrees/
+/.kilo/agent-manager.json
+
+# Local environment files; keep shareable examples.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Editor backups and operating-system metadata.
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
