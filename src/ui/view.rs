@@ -579,15 +579,7 @@ slint::slint! {
         out property <bool> can_stop_all: root.has_active_download && root.is_downloading;
         out property <int> total_items: root.sample_downloads.length + (root.has_active_download ? 1 : 0);
 
-        in-out property <[TableItem]> sample_downloads: [
-            { id: 1, filename: "Antigravity.Manager-win32-x64.exe", file_type: "exe", size_text: "138.92 MB", status_text: "Complete", time_left_text: "--", transfer_rate_text: "--", last_try_text: "Today" },
-            { id: 2, filename: "setup-lightshot.exe", file_type: "exe", size_text: "2.65 MB", status_text: "Complete", time_left_text: "--", transfer_rate_text: "--", last_try_text: "Today" },
-            { id: 3, filename: "Valheim-AnkerGames.zip", file_type: "zip", size_text: "4.04 GB", status_text: "Complete", time_left_text: "--", transfer_rate_text: "--", last_try_text: "Yesterday" },
-            { id: 4, filename: "Moana.mp4", file_type: "video", size_text: "1.42 GB", status_text: "Complete", time_left_text: "--", transfer_rate_text: "--", last_try_text: "2026-09-12" },
-            { id: 5, filename: "VSCodeUserSetup-x64-1.137.0.exe", file_type: "exe", size_text: "224.18 MB", status_text: "Complete", time_left_text: "--", transfer_rate_text: "--", last_try_text: "2026-09-10" },
-            { id: 6, filename: "voice-session.mp3", file_type: "audio", size_text: "12.73 MB", status_text: "Complete", time_left_text: "--", transfer_rate_text: "--", last_try_text: "2026-09-08" },
-            { id: 7, filename: "documentation-specs.pdf", file_type: "doc", size_text: "4.15 MB", status_text: "Complete", time_left_text: "--", transfer_rate_text: "--", last_try_text: "2026-09-05" }
-        ];
+        in-out property <[TableItem]> sample_downloads: [];
 
         callback start_download();
         callback pause_download();
@@ -1436,50 +1428,12 @@ mod tests {
             render();
 
             use slint::Model;
-            assert_eq!(ui.get_sample_downloads().row_count(), 7);
-            assert_eq!(ui.get_total_items(), 7);
-            for (category, expected_row) in [(0, 1), (1, 3), (2, 7), (3, 6), (5, 4), (7, 1)] {
-                ui.set_selected_category(category);
-                ui.set_selected_row(-1);
-                render();
-                click(300.0, 116.0);
-                assert_eq!(
-                    ui.get_selected_row(),
-                    expected_row,
-                    "category {category} should select its first visible sample"
-                );
-            }
-            ui.set_selected_category(4);
-            render();
-            for (index, expected_row) in [1, 2, 5].into_iter().enumerate() {
-                ui.set_selected_row(-1);
-                click(300.0, 116.0 + index as f32 * 25.0);
-                assert_eq!(ui.get_selected_row(), expected_row);
-            }
-            for category in [6, 8, 9] {
-                ui.set_selected_category(category);
-                ui.set_selected_row(-1);
-                render();
-                click(300.0, 116.0);
-                assert_eq!(
-                    ui.get_selected_row(),
-                    -1,
-                    "category {category} should not expose samples"
-                );
-            }
-            let samples = ui.get_sample_downloads();
-            let model = Rc::new(slint::VecModel::<TableItem>::default());
-            ui.set_sample_downloads(model.clone().into());
-            ui.set_selected_category(0);
+            assert_eq!(ui.get_sample_downloads().row_count(), 0);
             assert_eq!(ui.get_total_items(), 0);
             render();
-            model.push(samples.row_data(0).unwrap());
-            assert_eq!(ui.get_total_items(), 1);
-            render();
             ui.set_has_active_download(true);
-            assert_eq!(ui.get_total_items(), 2);
+            assert_eq!(ui.get_total_items(), 1);
             ui.set_has_active_download(false);
-            ui.set_sample_downloads(samples);
         }
         Ok(())
     }
