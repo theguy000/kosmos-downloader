@@ -375,7 +375,22 @@ async fn metadata_uses_head_fields_or_range_probe_total() {
 #[tokio::test]
 async fn test_full_multiconnection_download() {
     let payload = generate_test_payload();
-    let server_addr = start_mock_server(payload.clone()).await;
+    let (request_tx, mut request_rx) = tokio::sync::mpsc::channel(4);
+    let server_addr = start_local_server(move |mut socket, request| {
+        let request_tx = request_tx.clone();
+        async move {
+            if is_head_request(&request) {
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {TEST_DATA_SIZE}\r\n\
+                     Accept-Ranges: bytes\r\nConnection: close\r\n\r\n"
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            } else {
+                request_tx.send((socket, request)).await.unwrap();
+            }
+        }
+    })
+    .await;
 
     let temp_dir = std::env::temp_dir();
     let save_path = temp_dir.join(format!("kosmos_full_test_{}.bin", std::process::id()));
@@ -395,6 +410,50 @@ async fn test_full_multiconnection_download() {
         })
         .await
         .unwrap();
+
+    // Hold every response until all four requests arrive: serial downloads must fail.
+    let requests = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut requests = Vec::new();
+        for _ in 0..4 {
+            requests.push(request_rx.recv().await.unwrap());
+        }
+        requests
+    })
+    .await
+    .expect("Chunk requests did not arrive concurrently");
+
+    let mut peers = std::collections::HashSet::new();
+    let mut starts = std::collections::HashSet::new();
+    for (mut socket, request) in requests {
+        assert!(peers.insert(socket.peer_addr().unwrap()));
+        assert_eq!(request.lines().next(), Some("GET /payload.bin HTTP/1.1"));
+        let range = request
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("range").then_some(value.trim())
+            })
+            .unwrap();
+        let (start, end) = range
+            .strip_prefix("bytes=")
+            .unwrap()
+            .split_once('-')
+            .unwrap();
+        let start: usize = start.parse().unwrap();
+        let end: usize = end.parse().unwrap();
+        assert!(starts.insert(start));
+        assert!(start < TEST_DATA_SIZE && start.is_multiple_of(TEST_DATA_SIZE / 4));
+        assert_eq!(end, start + TEST_DATA_SIZE / 4 - 1);
+
+        let response = format!(
+            "HTTP/1.1 206 Partial Content\r\n\
+             Content-Range: bytes {start}-{end}/{TEST_DATA_SIZE}\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n",
+            end - start + 1
+        );
+        socket.write_all(response.as_bytes()).await.unwrap();
+        socket.write_all(&payload[start..=end]).await.unwrap();
+    }
 
     let terminal = wait_for_snapshot(
         &mut snapshot_rx,

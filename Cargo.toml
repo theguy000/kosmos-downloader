@@ -5,7 +5,8 @@ edition = "2024"
 
 [dependencies]
 slint = { version = "1", default-features = false, features = ["backend-winit", "renderer-software", "compat-1-2"] }
-reqwest = "0.13.5"
+# Keep HTTP/2 disabled for the fallback client as well.
+reqwest = { version = "0.13.5", default-features = false, features = ["default-tls", "charset", "system-proxy"] }
 rfd = "0.17.2"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }

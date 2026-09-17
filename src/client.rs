@@ -100,6 +100,7 @@ impl Default for HttpClient {
 impl HttpClient {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
+            .http1_only()
             .timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::limited(10))
             .user_agent("KosmosDownloader/1.0")
