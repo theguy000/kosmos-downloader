@@ -1029,18 +1029,15 @@ slint::slint! {
                                 }
                             }
                         }
-                        if root.action_error_message != "" || (root.active_row_visible &&
-                            (root.active_error_message != "" || root.is_paused)): Rectangle {
+                        if root.active_row_visible && root.is_paused: Rectangle {
                             min-height: 48px;
                             vertical-stretch: 0;
                             background: #202024;
                             VerticalLayout {
                                 padding: 12px;
                                 Text {
-                                    text: root.action_error_message != "" ? root.action_error_message :
-                                        (root.active_error_message != "" ? root.active_error_message :
-                                        (root.is_resumable ? "Stopped. Select the download and choose Resume to continue." :
-                                        "Stopped. Resume is unavailable for this download; Restart downloads the file from the beginning."));
+                                    text: root.is_resumable ? "Stopped. Select the download and choose Resume to continue." :
+                                        "Stopped. Resume is unavailable for this download; Restart downloads the file from the beginning.";
                                     color: #d4d4d8;
                                     font-size: 11px;
                                     wrap: word-wrap;
@@ -1159,6 +1156,55 @@ slint::slint! {
                             clicked => {
                                 root.show_add_dialog = false;
                                 root.start_download();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.action_error_message != "" || root.active_error_message != "": Rectangle {
+            background: #000000bb;
+
+            TouchArea {}
+
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: 440px;
+                height: 188px;
+                background: #1f1f23;
+
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+
+                    Text {
+                        height: 24px;
+                        text: root.active_error_message != "" ? "Download failed" : "Action unavailable";
+                        font-size: 15px;
+                        font-weight: 600;
+                        color: #f4f4f5;
+                    }
+
+                    Text {
+                        text: root.action_error_message != "" ? root.action_error_message : root.active_error_message;
+                        color: #d4d4d8;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+
+                    Rectangle {}
+
+                    HorizontalLayout {
+                        alignment: end;
+
+                        PointerButton {
+                            text: "OK";
+                            primary: true;
+                            clicked => {
+                                root.action_error_message = "";
+                                root.active_error_message = "";
                             }
                         }
                     }
@@ -1391,6 +1437,13 @@ mod tests {
                 "Network failures retain a resume action"
             );
             assert_eq!(ui.get_active_status(), "Failed");
+            assert_eq!(ui.get_active_error_message(), "Offline");
+            render();
+            click(width as f32 / 2.0 + 175.0, height as f32 / 2.0 + 68.0);
+            assert!(
+                ui.get_active_error_message().is_empty(),
+                "The error dialog can be dismissed"
+            );
             snapshot.resumable = false;
             super::super::update_window_state(&ui, &snapshot);
             assert!(!ui.get_can_resume(), "Unsafe failures cannot resume");
