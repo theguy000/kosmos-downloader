@@ -1,0 +1,275 @@
+import { Slider } from "std-widgets.slint";
+import { IconChevronDown, IconChevronRight } from "icons.slint";
+
+export component CategoryRow inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <bool> selected;
+    in property <bool> child;
+    in property <bool> last-child;
+    in property <bool> expandable;
+    in property <bool> expanded;
+    callback clicked();
+    callback toggle();
+    callback activate();
+    activate => {
+        if root.enabled {
+            if root.expandable && root.selected { root.toggle(); }
+            root.clicked();
+        }
+    }
+
+    height: 26px;
+    background: !root.enabled ? transparent : (root.selected ? #273248 : (touch.has-hover ? #242428 : transparent));
+    border-width: root.enabled && focus.has-focus ? 1px : 0px;
+    border-color: #8ba9d6;
+    forward-focus: focus;
+    accessible-role: button;
+    accessible-label: root.enabled ? root.text : root.text + " (unavailable)";
+    accessible-enabled: root.enabled;
+    accessible-action-default => { root.activate(); }
+
+    if root.child: Rectangle {
+        x: 30px; y: 0px;
+        width: 1px;
+        height: root.last-child ? parent.height / 2 : parent.height;
+        background: #34343b;
+    }
+    if root.child: Rectangle {
+        x: 30px; y: parent.height / 2;
+        width: 9px; height: 1px;
+        background: #34343b;
+    }
+
+    Rectangle {
+        x: root.child ? 44px : 24px;
+        y: (parent.height - self.height) / 2;
+        width: 16px; height: 16px;
+        opacity: root.enabled ? 1 : 0.3;
+        HorizontalLayout {
+            alignment: center;
+            @children
+        }
+    }
+    Text {
+        x: root.child ? 66px : 46px;
+        width: parent.width - self.x - 8px;
+        height: parent.height;
+        text: root.text;
+        font-size: 12px;
+        font-weight: 400;
+        color: !root.enabled ? #71717a : (root.selected ? #edf3ff : #c4c4cc);
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == " " || event.text == "\n" {
+                root.activate();
+                return accept;
+            }
+            if root.expandable && ((event.text == Key.RightArrow && !root.expanded)
+                || (event.text == Key.LeftArrow && root.expanded)) {
+                root.toggle();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    // Hit areas overlay the content; they must not participate in its layout.
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            focus.focus();
+            root.activate();
+        }
+    }
+    if root.expandable: Rectangle {
+        x: 0px;
+        width: 24px; height: parent.height;
+        background: disclosure.has-hover ? #ffffff0c : transparent;
+        if root.expanded: IconChevronDown { x: 8px; y: 9px; stroke: #a1a1aa; }
+        if !root.expanded: IconChevronRight { x: 8px; y: 9px; stroke: #a1a1aa; }
+        disclosure := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: pointer;
+            clicked => { focus.focus(); root.toggle(); }
+        }
+    }
+}
+
+export component IdmToolButton inherits Rectangle {
+    in property <string> text: "";
+    in property <bool> enabled: true;
+    callback clicked();
+
+    width: 62px;
+    height: 48px;
+    background: !root.enabled ? transparent : (touch.pressed ? #34343b :
+        (touch.has-hover ? #2b2b30 : transparent));
+    border-width: root.enabled && focus.has-focus ? 1px : 0px;
+    border-color: #8ba9d6;
+    forward-focus: focus;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 3px;
+        padding: 2px;
+
+        Rectangle {
+            height: 16px;
+            opacity: root.enabled ? 1 : 0.3;
+            HorizontalLayout {
+                alignment: center;
+                @children
+            }
+        }
+
+        Text {
+            text: root.text;
+            font-size: 10px;
+            color: !root.enabled ? #71717a : (touch.has-hover ? #f4f4f5 : #d4d4d8);
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if root.enabled && (event.text == Key.Space || event.text == Key.Return) {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { focus.focus(); root.clicked(); }
+    }
+}
+
+export component PointerButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    width: root.text == "Download" ? 88px : 72px;
+    height: 36px;
+    background: !root.enabled ? #303034 : (touch.pressed ? #3b4658 :
+        (root.primary ? (touch.has-hover ? #a7bfe2 : #8ba9d6) :
+        (touch.has-hover ? #303036 : transparent)));
+    border-width: focus.has-focus ? 1px : 0px;
+    border-color: #edf3ff;
+    forward-focus: focus;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+
+    Text {
+        text: root.text;
+        font-size: 12px;
+        font-weight: root.primary ? 600 : 400;
+        color: !root.enabled ? #92929b : (root.primary && !touch.pressed ? #18181b : #f4f4f5);
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { focus.focus(); root.clicked(); }
+    }
+}
+
+export component DialogInput inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder-text;
+    in property <string> label;
+
+    height: 36px;
+    horizontal-stretch: 1;
+    background: input.has-focus ? #303036 : #2b2b30;
+    forward-focus: input;
+    TouchArea { clicked => { input.focus(); } }
+    if root.text == "": Text {
+        x: 12px;
+        width: parent.width - 24px;
+        height: parent.height;
+        text: root.placeholder-text;
+        color: #a1a1aa;
+        font-size: 12px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    input := TextInput {
+        x: 12px;
+        width: parent.width - 24px;
+        height: parent.height;
+        text <=> root.text;
+        single-line: true;
+        font-size: 12px;
+        color: #f4f4f5;
+        selection-background-color: #8ba9d6;
+        selection-foreground-color: #18181b;
+        vertical-alignment: center;
+        accessible-label: root.label;
+    }
+    Rectangle {
+        y: parent.height - 2px;
+        height: 2px;
+        background: input.has-focus ? #8ba9d6 : transparent;
+    }
+}
+
+export component DialogSlider inherits Rectangle {
+    in-out property <float> value;
+    height: 28px;
+    horizontal-stretch: 1;
+    forward-focus: slider;
+
+    Rectangle {
+        x: 10px; y: (parent.height - self.height) / 2;
+        width: parent.width - 20px; height: 3px;
+        background: #45454d;
+        Rectangle {
+            x: 0px;
+            width: parent.width * (root.value - 1) / 15;
+            background: #8ba9d6;
+        }
+    }
+    Rectangle {
+        x: 4px + (parent.width - 20px) * (root.value - 1) / 15;
+        y: (parent.height - self.height) / 2;
+        width: 12px; height: 16px;
+        background: slider.has-focus ? #edf3ff : #8ba9d6;
+    }
+    // Keep native slider input and accessibility; replace only its paint.
+    slider := Slider {
+        width: parent.width; height: parent.height;
+        opacity: 0;
+        minimum: 1; maximum: 16; step: 1;
+        value <=> root.value;
+        changed(value) => { root.value = Math.round(value); }
+        accessible-label: "Streams";
+    }
+}

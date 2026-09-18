@@ -1,0 +1,162 @@
+import { IdmToolButton } from "controls.slint";
+import {
+    IconAdd,
+    IconDelete,
+    IconDeleteCompleted,
+    IconOptions,
+    IconResume,
+    IconStop,
+    IconStopAll,
+} from "icons.slint";
+
+export component ApplicationToolbar inherits Rectangle {
+    in property <bool> has_active_download: false;
+    in property <bool> is_completed: false;
+    in property <bool> is_paused: false;
+    in property <bool> is_resumable: false;
+    in property <bool> can_resume: false;
+    in property <bool> can_stop: false;
+    in property <bool> can_stop_all: false;
+    in property <bool> can_cancel: false;
+    callback show_add_dialog();
+    callback pause_download();
+    callback resume_download();
+    callback cancel_download();
+    callback open_file();
+
+    height: 79px;
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        Rectangle {
+            height: 25px;
+            background: #18181b;
+
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 2px;
+                alignment: start;
+
+                Rectangle {
+                    width: 48px;
+                    background: menu_tasks.has-hover ? #27272a : transparent;
+                    menu_tasks := TouchArea { mouse-cursor: pointer; clicked => { root.show_add_dialog(); } }
+                    Text { text: "Tasks"; font-size: 11px; color: #d4d4d8; vertical-alignment: center; horizontal-alignment: center; }
+                }
+
+                Rectangle {
+                    width: 40px;
+                    background: menu_file.has-hover ? #27272a : transparent;
+                    menu_file := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if root.has_active_download && root.is_completed { root.open_file(); }
+                        }
+                    }
+                    Text { text: "File"; font-size: 11px; color: #d4d4d8; vertical-alignment: center; horizontal-alignment: center; }
+                }
+
+                Rectangle {
+                    width: 72px;
+                    background: menu_dl.has-hover ? #27272a : transparent;
+                    menu_dl := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if root.can_stop { root.pause_download(); }
+                            else if root.can_resume { root.resume_download(); }
+                        }
+                    }
+                    Text { text: "Downloads"; font-size: 11px; color: #d4d4d8; vertical-alignment: center; horizontal-alignment: center; }
+                }
+
+                Rectangle {
+                    width: 44px;
+                    accessible-role: button;
+                    accessible-label: "View (unavailable)";
+                    accessible-enabled: false;
+                    Text { text: "View"; font-size: 11px; color: #71717a; vertical-alignment: center; horizontal-alignment: center; }
+                }
+
+                Rectangle {
+                    width: 44px;
+                    accessible-role: button;
+                    accessible-label: "Help (unavailable)";
+                    accessible-enabled: false;
+                    Text { text: "Help"; font-size: 11px; color: #71717a; vertical-alignment: center; horizontal-alignment: center; }
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: #27272a; }
+
+        Rectangle {
+            height: 52px;
+            background: #1f1f23;
+
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                padding-top: 2px;
+                padding-bottom: 2px;
+                spacing: 2px;
+                alignment: start;
+
+                IdmToolButton {
+                    text: "Add URL";
+                    clicked => { root.show_add_dialog(); }
+                    IconAdd {}
+                }
+
+                IdmToolButton {
+                    text: root.is_paused && !root.is_resumable ? "Restart" : "Resume";
+                    enabled: root.can_resume;
+                    clicked => { root.resume_download(); }
+                    IconResume {}
+                }
+
+                IdmToolButton {
+                    text: "Stop";
+                    enabled: root.can_stop;
+                    clicked => { root.pause_download(); }
+                    IconStop {}
+                }
+
+                IdmToolButton {
+                    text: "Stop All";
+                    enabled: root.can_stop_all;
+                    // The engine has one session, so Stop All shares Stop's safe pause.
+                    clicked => { root.pause_download(); }
+                    IconStopAll {}
+                }
+
+                Rectangle { width: 1px; height: 32px; background: #27272a; }
+
+                IdmToolButton {
+                    text: "Delete";
+                    enabled: root.can_cancel;
+                    clicked => { root.cancel_download(); }
+                    IconDelete {}
+                }
+
+                IdmToolButton {
+                    text: "Delete C...";
+                    enabled: false;
+                    IconDeleteCompleted {}
+                }
+
+                Rectangle { width: 1px; height: 32px; background: #27272a; }
+
+                IdmToolButton {
+                    text: "Options";
+                    clicked => { root.show_add_dialog(); }
+                    IconOptions {}
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: #27272a; }
+    }
+}

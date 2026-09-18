@@ -1,0 +1,155 @@
+import { CategoryRow } from "controls.slint";
+import {
+    IconArchive,
+    IconAudio,
+    IconCheck,
+    IconDoc,
+    IconFolder,
+    IconGrabber,
+    IconMedia,
+    IconProgram,
+    IconQueue,
+    IconUnfinished,
+} from "icons.slint";
+
+export component CategorySidebar inherits Rectangle {
+    in-out property <int> selected_category;
+    in-out property <bool> all_downloads_expanded;
+
+    width: 200px;
+    background: #18181b;
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        Rectangle {
+            height: 25px;
+            background: #202024;
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                alignment: space-between;
+
+                Text {
+                    text: "Categories";
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: #a1a1aa;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: #27272a; }
+
+        VerticalLayout {
+            padding: 6px;
+            spacing: 0px;
+
+            CategoryRow {
+                text: "All Downloads";
+                selected: root.selected_category == 0;
+                expandable: true;
+                expanded: root.all_downloads_expanded;
+                clicked => { root.selected_category = 0; }
+                toggle => {
+                    root.all_downloads_expanded = !root.all_downloads_expanded;
+                    if !root.all_downloads_expanded && root.selected_category >= 1 && root.selected_category <= 5 {
+                        root.selected_category = 0;
+                    }
+                }
+                IconFolder {}
+            }
+
+            if root.all_downloads_expanded: VerticalLayout {
+                spacing: 0px;
+                padding: 0px;
+
+                CategoryRow {
+                    text: "Compressed";
+                    child: true;
+                    selected: root.selected_category == 1;
+                    clicked => { root.selected_category = 1; }
+                    IconArchive {}
+                }
+
+                CategoryRow {
+                    text: "Documents";
+                    child: true;
+                    selected: root.selected_category == 2;
+                    clicked => { root.selected_category = 2; }
+                    IconDoc {}
+                }
+
+                CategoryRow {
+                    text: "Music";
+                    child: true;
+                    selected: root.selected_category == 3;
+                    clicked => { root.selected_category = 3; }
+                    IconAudio {}
+                }
+
+                CategoryRow {
+                    text: "Programs";
+                    child: true;
+                    selected: root.selected_category == 4;
+                    clicked => { root.selected_category = 4; }
+                    IconProgram {}
+                }
+
+                CategoryRow {
+                    text: "Video";
+                    child: true;
+                    last-child: true;
+                    selected: root.selected_category == 5;
+                    clicked => { root.selected_category = 5; }
+                    IconMedia {}
+                }
+            }
+
+            Rectangle {
+                height: 6px;
+                Rectangle { x: 24px; y: 3px; width: parent.width - 32px; height: 1px; background: #2e2e34; }
+            }
+
+            CategoryRow {
+                text: "Unfinished";
+                selected: root.selected_category == 6;
+                clicked => { root.selected_category = 6; }
+                IconUnfinished {}
+            }
+
+            CategoryRow {
+                text: "Finished";
+                selected: root.selected_category == 7;
+                clicked => { root.selected_category = 7; }
+                IconCheck {}
+            }
+
+            Rectangle {
+                height: 6px;
+                Rectangle { x: 24px; y: 3px; width: parent.width - 32px; height: 1px; background: #2e2e34; }
+            }
+
+            CategoryRow {
+                text: "Grabber projects";
+                enabled: false;
+                selected: root.selected_category == 8;
+                clicked => { root.selected_category = 8; }
+                IconGrabber {}
+            }
+
+            CategoryRow {
+                text: "Queues";
+                enabled: false;
+                selected: root.selected_category == 9;
+                clicked => { root.selected_category = 9; }
+                IconQueue {}
+            }
+        }
+
+        Rectangle {}
+    }
+}

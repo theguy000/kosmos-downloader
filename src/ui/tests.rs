@@ -1,0 +1,327 @@
+use super::MainWindow;
+use super::app::send_action;
+use super::platform::default_download_directory;
+use super::projection::{should_project_snapshot, update_window_state};
+use slint::ComponentHandle;
+
+#[test]
+fn snapshot_projection_handles_initial_changed_and_closed_updates() {
+    let (tx, mut rx) = tokio::sync::watch::channel(0_u8);
+    let mut initial = true;
+
+    {
+        let snapshot = rx.borrow_and_update();
+        assert!(should_project_snapshot(&snapshot, &mut initial));
+        assert_eq!(*snapshot, 0);
+    }
+    {
+        let snapshot = rx.borrow_and_update();
+        assert!(!should_project_snapshot(&snapshot, &mut initial));
+    }
+
+    assert!(tx.send(1).is_ok());
+    {
+        let snapshot = rx.borrow_and_update();
+        assert!(should_project_snapshot(&snapshot, &mut initial));
+        assert_eq!(*snapshot, 1);
+    }
+    {
+        let snapshot = rx.borrow_and_update();
+        assert!(!should_project_snapshot(&snapshot, &mut initial));
+    }
+
+    assert!(tx.send(2).is_ok());
+    drop(tx);
+    assert!(rx.has_changed().is_err());
+    {
+        let snapshot = rx.borrow_and_update();
+        assert!(should_project_snapshot(&snapshot, &mut initial));
+        assert_eq!(*snapshot, 2);
+    }
+    {
+        let snapshot = rx.borrow_and_update();
+        assert!(!should_project_snapshot(&snapshot, &mut initial));
+    }
+}
+
+#[test]
+fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std::error::Error>> {
+    use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+    use slint::platform::{Platform, PointerEventButton, WindowAdapter, WindowEvent};
+    use std::rc::Rc;
+
+    struct TestPlatform(Rc<MinimalSoftwareWindow>);
+    impl Platform for TestPlatform {
+        fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
+    slint::platform::set_platform(Box::new(TestPlatform(window.clone())))?;
+    let ui = MainWindow::new()?;
+    ui.show()?;
+    let click = |x, y| {
+        let position = slint::LogicalPosition::new(x, y);
+        window.dispatch_event(WindowEvent::PointerPressed {
+            position,
+            button: PointerEventButton::Left,
+        });
+        window.dispatch_event(WindowEvent::PointerReleased {
+            position,
+            button: PointerEventButton::Left,
+        });
+    };
+
+    for (width, height) in [(960, 540), (760, 420)] {
+        window.set_size(slint::PhysicalSize::new(width, height));
+        let mut pixels = vec![slint::Rgb8Pixel::default(); (width * height) as usize];
+        let mut render = || {
+            window.draw_if_needed(|renderer| {
+                renderer.render(&mut pixels, width as usize);
+            });
+        };
+        ui.set_all_downloads_expanded(true);
+        render();
+        // Every label and trailing blank area selects the same full-width row.
+        for x in [90.0, 185.0] {
+            ui.set_selected_category(6);
+            click(x, 124.0);
+            assert_eq!(ui.get_selected_category(), 0);
+            render();
+        }
+        for category in 1..10 {
+            let gap = if category >= 8 {
+                12
+            } else if category >= 6 {
+                6
+            } else {
+                0
+            };
+            let y = (124 + category * 26 + gap) as f32;
+            for x in [90.0, 185.0] {
+                click(x, y);
+                assert_eq!(
+                    ui.get_selected_category(),
+                    category.min(7),
+                    "Unimplemented categories must not change the selection"
+                );
+                render();
+            }
+        }
+        click(90.0, 150.0);
+        assert_eq!(ui.get_selected_category(), 1);
+        click(90.0, 124.0);
+        assert_eq!(ui.get_selected_category(), 0);
+        assert!(ui.get_all_downloads_expanded());
+        click(90.0, 124.0);
+        assert!(!ui.get_all_downloads_expanded());
+        render();
+        click(90.0, 124.0);
+        assert!(ui.get_all_downloads_expanded());
+        click(18.0, 124.0);
+        assert!(!ui.get_all_downloads_expanded());
+        assert_eq!(ui.get_selected_category(), 0);
+        render();
+        click(90.0, 156.0);
+        assert_eq!(ui.get_selected_category(), 6);
+        click(90.0, 124.0);
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::RightArrow.into(),
+        });
+        assert!(ui.get_all_downloads_expanded());
+        render();
+        click(90.0, 150.0);
+        ui.set_selected_category(0);
+        window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+        assert_eq!(ui.get_selected_category(), 1);
+        render();
+
+        let left = width as f32 / 2.0 - 230.0;
+        let top = height as f32 / 2.0 - 124.0;
+        ui.set_show_add_dialog(true);
+        ui.set_url_text("".into());
+        ui.set_dest_dir_text(
+            default_download_directory()
+                .to_string_lossy()
+                .into_owned()
+                .into(),
+        );
+        ui.set_streams_count(8.0);
+        render();
+        assert_eq!(ui.get_streams_count(), 8.0);
+        click(left + 395.0, top + 210.0);
+        assert!(
+            ui.get_show_add_dialog(),
+            "Empty URL keeps Download disabled"
+        );
+
+        click(left + 84.0, top + 166.0);
+        assert_eq!(ui.get_streams_count(), 1.0);
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::RightArrow.into(),
+        });
+        assert_eq!(ui.get_streams_count(), 2.0);
+        click(left + 366.0, top + 166.0);
+        assert_eq!(ui.get_streams_count(), 16.0);
+
+        click(left + 120.0, top + 74.0);
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: "https://example.com/file.zip".into(),
+        });
+        assert_eq!(ui.get_url_text(), "https://example.com/file.zip");
+        let browsed = Rc::new(std::cell::Cell::new(0));
+        let count = browsed.clone();
+        ui.on_browse_folder(move || count.set(count.get() + 1));
+        click(left + 400.0, top + 122.0);
+        window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+        assert_eq!(browsed.get(), 2, "Browse supports pointer and keyboard");
+        render();
+        click(left + 310.0, top + 210.0);
+        assert!(!ui.get_show_add_dialog());
+        ui.set_show_add_dialog(true);
+        let started = Rc::new(std::cell::Cell::new(false));
+        let flag = started.clone();
+        ui.on_start_download(move || flag.set(true));
+        render();
+        click(left + 395.0, top + 210.0);
+        assert!(started.get());
+        assert!(!ui.get_show_add_dialog());
+        render();
+
+        let stopped = Rc::new(std::cell::Cell::new(0));
+        let count = stopped.clone();
+        ui.on_pause_download(move || count.set(count.get() + 1));
+        let resumed = Rc::new(std::cell::Cell::new(0));
+        let count = resumed.clone();
+        ui.on_resume_download(move || count.set(count.get() + 1));
+        ui.on_cancel_download(|| panic!("Stop All must not cancel the session"));
+
+        use crate::engine::{DownloadAction, DownloadSnapshot, DownloadStatus};
+        let mut snapshot = DownloadSnapshot {
+            filename: "archive.zip".into(),
+            status: DownloadStatus::Downloading,
+            resumable: true,
+            ..Default::default()
+        };
+        update_window_state(&ui, &snapshot);
+        assert_eq!(ui.get_total_items(), 1);
+        ui.set_selected_category(6);
+        ui.set_selected_row(1);
+        render();
+        assert!(ui.get_active_row_visible());
+        assert!(
+            !ui.get_can_stop(),
+            "Stop only targets the selected download"
+        );
+        assert!(ui.get_can_stop_all());
+        click(166.0, 50.0);
+        assert_eq!(stopped.get(), 0);
+        click(230.0, 50.0);
+        assert_eq!(stopped.get(), 1, "Stop All ignores selection");
+        window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+        assert_eq!(stopped.get(), 2, "Toolbar supports keyboard activation");
+        click(300.0, 116.0);
+        assert_eq!(ui.get_selected_row(), 0);
+        ui.set_selected_row(1);
+        window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+        assert_eq!(
+            ui.get_selected_row(),
+            0,
+            "Download selection supports keyboard"
+        );
+        assert!(ui.get_can_stop());
+        click(166.0, 50.0);
+        assert_eq!(stopped.get(), 3);
+
+        snapshot.status = DownloadStatus::Paused;
+        update_window_state(&ui, &snapshot);
+        render();
+        assert!(ui.get_can_resume());
+        assert!(!ui.get_can_stop_all());
+        assert_eq!(ui.get_active_status(), "Stopped");
+        window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+        assert_eq!(stopped.get(), 3, "A disabled Stop ignores keyboard input");
+        ui.set_selected_row(1);
+        click(102.0, 50.0);
+        assert_eq!(resumed.get(), 0, "Resume cannot target another row");
+        ui.set_selected_row(0);
+        click(102.0, 50.0);
+        assert_eq!(resumed.get(), 1);
+        snapshot.resumable = false;
+        update_window_state(&ui, &snapshot);
+        render();
+        click(102.0, 50.0);
+        assert_eq!(resumed.get(), 2, "Non-range downloads can restart");
+        snapshot.status = DownloadStatus::Failed("Offline".into());
+        snapshot.resumable = true;
+        update_window_state(&ui, &snapshot);
+        assert!(
+            ui.get_can_resume(),
+            "Network failures retain a resume action"
+        );
+        assert_eq!(ui.get_active_status(), "Failed");
+        assert_eq!(ui.get_active_error_message(), "Offline");
+        render();
+        click(width as f32 / 2.0 + 175.0, height as f32 / 2.0 + 68.0);
+        assert!(
+            ui.get_active_error_message().is_empty(),
+            "The error dialog can be dismissed"
+        );
+        snapshot.resumable = false;
+        update_window_state(&ui, &snapshot);
+        assert!(!ui.get_can_resume(), "Unsafe failures cannot resume");
+        ui.set_selected_category(7);
+        assert!(!ui.get_active_row_visible());
+        assert!(!ui.get_can_resume(), "Hidden selection cannot be resumed");
+        for status in [
+            DownloadStatus::Connecting,
+            DownloadStatus::Downloading,
+            DownloadStatus::Paused,
+            DownloadStatus::Failed("Offline".into()),
+            DownloadStatus::Completed,
+            DownloadStatus::Idle,
+        ] {
+            snapshot.status = status.clone();
+            update_window_state(&ui, &snapshot);
+            ui.set_selected_category(6);
+            assert_eq!(
+                ui.get_active_row_visible(),
+                !matches!(status, DownloadStatus::Completed | DownloadStatus::Idle)
+            );
+            assert_eq!(
+                ui.get_can_stop_all(),
+                matches!(
+                    status,
+                    DownloadStatus::Connecting | DownloadStatus::Downloading
+                )
+            );
+            render();
+        }
+        snapshot.status = DownloadStatus::Completed;
+        update_window_state(&ui, &snapshot);
+        for category in 0..10 {
+            ui.set_selected_category(category);
+            assert_eq!(ui.get_active_row_visible(), matches!(category, 0 | 1 | 7));
+        }
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        assert!(send_action(&ui, &tx, DownloadAction::Pause));
+        assert!(!send_action(&ui, &tx, DownloadAction::Resume));
+        assert!(ui.get_action_error_message().contains("busy"));
+        drop(rx);
+        assert!(!send_action(&ui, &tx, DownloadAction::Pause));
+        assert!(ui.get_action_error_message().contains("unavailable"));
+        ui.set_action_error_message("".into());
+        update_window_state(&ui, &DownloadSnapshot::default());
+        render();
+
+        use slint::Model;
+        assert_eq!(ui.get_sample_downloads().row_count(), 0);
+        assert_eq!(ui.get_total_items(), 0);
+        render();
+        ui.set_has_active_download(true);
+        assert_eq!(ui.get_total_items(), 1);
+        ui.set_has_active_download(false);
+    }
+    Ok(())
+}

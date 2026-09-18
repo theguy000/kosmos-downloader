@@ -1,0 +1,276 @@
+import { FileTypeIcon } from "icons.slint";
+import { PausedTransferDetails } from "transfer_details.slint";
+
+export struct TableItem {
+    id: int,
+    filename: string,
+    file_type: string,
+    size_text: string,
+    status_text: string,
+    time_left_text: string,
+    transfer_rate_text: string,
+    last_try_text: string,
+}
+
+component DownloadRowColumns inherits HorizontalLayout {
+    in property <string> filename;
+    in property <string> file_type;
+    in property <string> size_text;
+    in property <string> status_text;
+    in property <string> time_left_text;
+    in property <string> transfer_rate_text;
+    in property <string> last_try_text;
+    in property <bool> is_active: false;
+    in property <color> status_color: #10b981;
+
+    padding-left: 8px;
+    padding-right: 8px;
+    spacing: 0px;
+
+    HorizontalLayout {
+        horizontal-stretch: 3;
+        spacing: 6px;
+        alignment: start;
+        FileTypeIcon { file-type: root.file_type; }
+        Text {
+            text: root.filename;
+            font-size: 11px;
+            color: root.is_active ? #f4f4f5 : #d4d4d8;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+    }
+
+    HorizontalLayout {
+        width: 80px;
+        padding-left: 6px;
+        alignment: start;
+        Text {
+            text: root.size_text;
+            font-size: 11px;
+            color: root.is_active ? #d4d4d8 : #71717a;
+            vertical-alignment: center;
+        }
+    }
+
+    HorizontalLayout {
+        width: 95px;
+        padding-left: 6px;
+        alignment: start;
+        Text {
+            text: root.status_text;
+            font-size: 11px;
+            color: root.status_color;
+            vertical-alignment: center;
+        }
+    }
+
+    HorizontalLayout {
+        width: 80px;
+        padding-left: 6px;
+        alignment: start;
+        Text {
+            text: root.time_left_text;
+            font-size: 11px;
+            color: root.is_active ? #d4d4d8 : #52525b;
+            vertical-alignment: center;
+        }
+    }
+
+    HorizontalLayout {
+        width: 90px;
+        padding-left: 6px;
+        alignment: start;
+        Text {
+            text: root.transfer_rate_text;
+            font-size: 11px;
+            color: root.is_active ? #d4d4d8 : #52525b;
+            vertical-alignment: center;
+        }
+    }
+
+    HorizontalLayout {
+        width: 90px;
+        padding-left: 6px;
+        alignment: start;
+        Text {
+            text: root.last_try_text;
+            font-size: 11px;
+            color: root.is_active ? #71717a : #52525b;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component DownloadTable inherits Rectangle {
+    in property <bool> active_row_visible: false;
+    in-out property <int> selected_row: 0;
+    in property <bool> is_completed: false;
+    in property <bool> is_paused: false;
+    in property <bool> is_resumable: false;
+    in property <string> active_filename: "";
+    in property <string> active_file_type: "doc";
+    in property <string> active_size: "0 B";
+    in property <string> active_status: "Idle";
+    in property <color> active_status_color: #71717a;
+    in property <string> active_time_left: "--:--";
+    in property <string> active_transfer_rate: "0 KB/s";
+    in property <string> active_last_try: "Today";
+    in property <int> selected_category: 0;
+    in property <int> total_items: 0;
+    in property <[TableItem]> sample_downloads: [];
+    callback open_file();
+    pure function category_matches(category: int, file_type: string, completed: bool) -> bool {
+        return category == 0
+            || (category == 1 && file_type == "zip")
+            || (category == 2 && file_type == "doc")
+            || (category == 3 && file_type == "audio")
+            || (category == 4 && file_type == "exe")
+            || (category == 5 && file_type == "video")
+            || (category == 6 && !completed)
+            || (category == 7 && completed);
+    }
+
+    background: #141416;
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        Rectangle {
+            height: 25px;
+            background: #1f1f23;
+
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 0px;
+
+                HorizontalLayout {
+                    horizontal-stretch: 3;
+                    Text { text: "File Name"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                    Rectangle { width: 1px; background: #27272a; }
+                }
+                HorizontalLayout {
+                    width: 80px; padding-left: 6px;
+                    Text { text: "Size"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                    Rectangle { width: 1px; background: #27272a; }
+                }
+                HorizontalLayout {
+                    width: 95px; padding-left: 6px;
+                    Text { text: "Status"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                    Rectangle { width: 1px; background: #27272a; }
+                }
+                HorizontalLayout {
+                    width: 80px; padding-left: 6px;
+                    Text { text: "Time left"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                    Rectangle { width: 1px; background: #27272a; }
+                }
+                HorizontalLayout {
+                    width: 90px; padding-left: 6px;
+                    Text { text: "Transfer rate"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                    Rectangle { width: 1px; background: #27272a; }
+                }
+                HorizontalLayout {
+                    width: 90px; padding-left: 6px;
+                    Text { text: "Last Try Date"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: #27272a; }
+
+        VerticalLayout {
+            padding: 0px;
+            spacing: 0px;
+
+            if root.active_row_visible: Rectangle {
+                height: 25px;
+                background: root.selected_row == 0 ? #273248 : (act_t.has-hover ? #202024 : #18181b);
+                border-width: row_focus.has-focus ? 1px : 0px;
+                border-color: #8ba9d6;
+                forward-focus: row_focus;
+                accessible-role: button;
+                accessible-label: root.active_filename + ", " + root.active_status;
+                accessible-action-default => { root.selected_row = 0; }
+
+                DownloadRowColumns {
+                    filename: root.active_filename != "" ? root.active_filename : "New Download";
+                    file-type: root.active_file_type;
+                    size-text: root.active_size;
+                    status-text: root.active_status;
+                    time-left-text: root.active_time_left;
+                    transfer-rate-text: root.active_transfer_rate;
+                    last-try-text: root.active_last_try;
+                    is-active: true;
+                    status-color: root.active_status_color;
+                }
+                Rectangle { y: parent.height - 1px; height: 1px; background: #27272a; }
+                row_focus := FocusScope {
+                    key-pressed(event) => {
+                        if event.text == Key.Space || event.text == Key.Return {
+                            root.selected_row = 0;
+                            return accept;
+                        }
+                        return reject;
+                    }
+                }
+                act_t := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { row_focus.focus(); root.selected_row = 0; }
+                    double-clicked => { if root.is_completed { root.open_file(); } }
+                }
+            }
+
+            for item[idx] in root.sample_downloads: Rectangle {
+                property <bool> is_visible: root.category_matches(
+                    root.selected_category, item.file_type, true);
+
+                height: self.is_visible ? 25px : 0px;
+                background: root.selected_row == item.id ? #273248 : (s_touch.has-hover ? #202024 : (Math.mod(idx, 2) == 0 ? #141416 : #18181b));
+
+                s_touch := TouchArea {
+                    enabled: parent.is_visible;
+                    mouse-cursor: pointer;
+                    clicked => { root.selected_row = item.id; }
+                }
+
+                if self.is_visible: DownloadRowColumns {
+                    filename: item.filename;
+                    file-type: item.file_type;
+                    size-text: item.size_text;
+                    status-text: item.status_text;
+                    time-left-text: item.time_left_text;
+                    transfer-rate-text: item.transfer_rate_text;
+                    last-try-text: item.last_try_text;
+                }
+                if self.is_visible: Rectangle { y: parent.height - 1px; height: 1px; background: #27272a; }
+            }
+        }
+
+        Rectangle {
+            if root.total_items == 0 || (root.selected_category == 6 && !root.active_row_visible): VerticalLayout {
+                padding: 24px;
+                spacing: 6px;
+                alignment: center;
+                Text {
+                    text: root.selected_category == 6 ? "No unfinished downloads" : "No downloads";
+                    color: #d4d4d8;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.selected_category == 6 ? "Active, stopped, and failed downloads appear here." :
+                        "Choose Add URL to start a download.";
+                    color: #a1a1aa;
+                    font-size: 11px;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
+        if root.active_row_visible && root.is_paused: PausedTransferDetails {
+            is-resumable: root.is_resumable;
+        }
+    }
+}

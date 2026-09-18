@@ -1,0 +1,87 @@
+import { DialogInput, DialogSlider, PointerButton } from "controls.slint";
+
+export component AddDownloadDialog inherits Rectangle {
+    in-out property <string> url_text: "";
+    in-out property <string> dest_dir_text: "";
+    in-out property <float> streams_count: 8;
+    callback browse_folder();
+    callback start_download();
+    callback dismiss();
+
+    background: #000000bb;
+
+    TouchArea {}
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 460px;
+        height: 248px;
+        background: #1f1f23;
+
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+
+            Text {
+                height: 24px;
+                text: "Add New Download";
+                font-size: 15px;
+                font-weight: 600;
+                color: #f4f4f5;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "URL:"; width: 55px; font-size: 11px; color: #a1a1aa; vertical-alignment: center; }
+                DialogInput {
+                    text <=> root.url_text;
+                    placeholder-text: "https://example.com/file.zip";
+                    label: "URL";
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Save to:"; width: 55px; font-size: 11px; color: #a1a1aa; vertical-alignment: center; }
+                DialogInput { text <=> root.dest_dir_text; label: "Save to"; }
+                PointerButton {
+                    text: "Browse";
+                    clicked => { root.browse_folder(); }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Streams:"; width: 55px; font-size: 11px; color: #a1a1aa; vertical-alignment: center; }
+                DialogSlider {
+                    value <=> root.streams_count;
+                }
+                Text {
+                    text: Math.round(root.streams_count) + " threads";
+                    width: 65px; font-size: 11px; color: #a1a1aa; vertical-alignment: center;
+                }
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+
+                PointerButton {
+                    text: "Cancel";
+                    clicked => { root.dismiss(); }
+                }
+
+                PointerButton {
+                    text: "Download";
+                    primary: true;
+                    enabled: root.url_text != "";
+                    clicked => {
+                        root.dismiss();
+                        root.start_download();
+                    }
+                }
+            }
+        }
+    }
+}
