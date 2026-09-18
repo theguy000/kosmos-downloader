@@ -327,6 +327,18 @@ fn validate_range_response(
             )
         })?;
 
+    if let Some(expected_total) = expected_total
+        && content_range.total != Some(expected_total)
+    {
+        if content_range.total.is_some() {
+            return Err(ClientError::ContentChanged);
+        }
+        return Err(ClientError::InvalidRangeResponse(format!(
+            "range total is {:?}, expected {expected_total}",
+            content_range.total
+        )));
+    }
+
     if content_range.start != expected_start {
         return Err(ClientError::InvalidRangeResponse(format!(
             "range starts at {}, expected {expected_start}",
@@ -340,18 +352,6 @@ fn validate_range_response(
         return Err(ClientError::InvalidRangeResponse(format!(
             "range ends at {}, expected {expected_end}",
             content_range.end
-        )));
-    }
-
-    if let Some(expected_total) = expected_total
-        && content_range.total != Some(expected_total)
-    {
-        if content_range.total.is_some() {
-            return Err(ClientError::ContentChanged);
-        }
-        return Err(ClientError::InvalidRangeResponse(format!(
-            "range total is {:?}, expected {expected_total}",
-            content_range.total
         )));
     }
 
