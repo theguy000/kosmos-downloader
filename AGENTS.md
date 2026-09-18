@@ -25,6 +25,12 @@
    - **Safety**: Prefer safe Rust. Any necessary `unsafe` block must document its safety invariants.
    - **Verification**: Add focused regression tests for behavior changes, including relevant boundary and failure cases. Keep network tests local and deterministic, and isolate temporary files between tests.
 
+## Cross-Platform & Resource Efficiency
+- Design for Windows, macOS, and Linux. Isolate OS-specific behavior and avoid assumptions about installed fonts, filesystem paths, or platform APIs.
+- Very low RAM usage and CPU overhead are core product requirements, both during downloads and at idle. Keep idle work negligible.
+- Prefer event-driven updates, bounded buffers and concurrency, and direct streaming to disk. Avoid unnecessary polling, redraws, allocations, copies, and unbounded caches.
+- Measure performance-sensitive changes in release builds rather than assuming they are efficient; include graphics memory and GPU activity when evaluating renderer choices. Never sacrifice download integrity, error handling, or accessibility for lower resource usage.
+
 ## Download Safety
 - Validate range response status, `Content-Range`, and expected byte counts; never write a full-body response as a requested chunk.
 - Before resuming, validate saved ranges and remote resource identity; never knowingly combine bytes from different resource versions.

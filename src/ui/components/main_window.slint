@@ -1,3 +1,6 @@
+// Inter 4.1: https://github.com/rsms/inter/releases/tag/v4.1 (SIL OFL 1.1).
+import "../fonts/InterVariable.ttf";
+
 import { AddDownloadDialog } from "add_download_dialog.slint";
 import { DownloadTable, TableItem } from "download_table.slint";
 import { ErrorDialog } from "error_dialog.slint";
@@ -7,6 +10,7 @@ import { StatusFooter } from "transfer_details.slint";
 
 export component MainWindow inherits Window {
     title: "Kosmos Downloader";
+    default-font-family: "Inter Variable";
     preferred-width: 960px;
     preferred-height: 540px;
     min-width: 760px;
