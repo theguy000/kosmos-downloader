@@ -516,7 +516,7 @@ slint::slint! {
             width: 12px; height: 16px;
             background: slider.has-focus ? #edf3ff : #8ba9d6;
         }
-        // ponytail: keep native slider input and accessibility; replace only its paint.
+        // keep native slider input and accessibility; replace only its paint.
         slider := Slider {
             width: parent.width; height: parent.height;
             opacity: 0;
@@ -692,7 +692,7 @@ slint::slint! {
                     IdmToolButton {
                         text: "Stop All";
                         enabled: root.can_stop_all;
-                        // ponytail: the engine has one session, so Stop All shares Stop's safe pause.
+                        // the engine has one session, so Stop All shares Stop's safe pause.
                         clicked => { root.pause_download(); }
                         IconStopAll {}
                     }
