@@ -785,6 +785,25 @@ mod tests {
     }
 
     #[test]
+    fn changed_range_total_takes_priority_over_shortened_end() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        for content_range in ["bytes 0-79/80", "bytes 0-99/120"] {
+            headers.insert(CONTENT_RANGE, content_range.parse().unwrap());
+            assert!(matches!(
+                validate_range_response(&headers, 0, Some(99), Some(100), None),
+                Err(ClientError::ContentChanged)
+            ));
+        }
+        for content_range in ["bytes 0-79/100", "bytes 0-79/*"] {
+            headers.insert(CONTENT_RANGE, content_range.parse().unwrap());
+            assert!(matches!(
+                validate_range_response(&headers, 0, Some(99), Some(100), None),
+                Err(ClientError::InvalidRangeResponse(_))
+            ));
+        }
+    }
+
+    #[test]
     fn range_headers_must_match_requested_bytes() {
         use reqwest::header::HeaderMap;
 
