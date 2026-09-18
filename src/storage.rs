@@ -106,6 +106,65 @@ impl Storage {
         }
     }
 
+    /// Reads exactly `data.len()` bytes at the specified byte offset.
+    pub(crate) fn read_at(&self, offset: u64, data: &mut [u8]) -> Result<(), StorageError> {
+        let data_len = u64::try_from(data.len()).map_err(|_| {
+            StorageError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "read length exceeds u64",
+            ))
+        })?;
+        offset.checked_add(data_len).ok_or_else(|| {
+            StorageError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "read range overflows u64",
+            ))
+        })?;
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileExt;
+
+            let mut current_offset = offset;
+            let mut remaining = data;
+            while !remaining.is_empty() {
+                match self.file.seek_read(remaining, current_offset) {
+                    Ok(0) => {
+                        return Err(StorageError::Io(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "unexpected EOF during offset read",
+                        )));
+                    }
+                    Ok(bytes_read) => {
+                        // The entire read range was checked above; reads cannot exceed it.
+                        current_offset += bytes_read as u64;
+                        remaining = &mut remaining[bytes_read..];
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(error) => return Err(StorageError::Io(error)),
+                }
+            }
+            Ok(())
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            self.file
+                .read_exact_at(data, offset)
+                .map_err(StorageError::Io)
+        }
+
+        #[cfg(not(any(windows, unix)))]
+        {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut file = (&*self.file).try_clone()?;
+            file.seek(SeekFrom::Start(offset))?;
+            file.read_exact(data)?;
+            Ok(())
+        }
+    }
+
     /// Flushes all pending writes to physical disk storage.
     pub fn sync(&self) -> Result<(), StorageError> {
         self.file.sync_all().map_err(StorageError::Io)
@@ -120,6 +179,36 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_TEMP_FILE: AtomicUsize = AtomicUsize::new(0);
+
+    struct TempFile {
+        path: PathBuf,
+    }
+
+    impl TempFile {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "kosmos-storage-{name}-{}-{}",
+                std::process::id(),
+                NEXT_TEMP_FILE.fetch_add(1, Ordering::Relaxed)
+            ));
+            let _ = std::fs::remove_file(&path);
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 
     #[test]
     fn test_storage_preallocation() {
@@ -196,5 +285,46 @@ mod tests {
         assert_eq!(bytes.len() as u64, extended_size);
 
         let _ = std::fs::remove_file(&file_path);
+    }
+
+    #[test]
+    fn test_storage_read_at_reads_requested_offset() {
+        let temp_file = TempFile::new("read-at");
+        std::fs::write(temp_file.path(), b"0123456789").unwrap();
+        let storage = Storage::create_or_open(temp_file.path(), None, false).unwrap();
+
+        let mut data = [0; 4];
+        storage.read_at(3, &mut data).unwrap();
+
+        assert_eq!(&data, b"3456");
+    }
+
+    #[test]
+    fn test_storage_read_at_reports_unexpected_eof() {
+        let temp_file = TempFile::new("read-at-eof");
+        std::fs::write(temp_file.path(), b"abc").unwrap();
+        let storage = Storage::create_or_open(temp_file.path(), None, false).unwrap();
+
+        let mut data = [0; 2];
+        let error = storage.read_at(2, &mut data).unwrap_err();
+
+        assert!(matches!(
+            error,
+            StorageError::Io(error) if error.kind() == std::io::ErrorKind::UnexpectedEof
+        ));
+    }
+
+    #[test]
+    fn test_storage_read_at_rejects_offset_overflow() {
+        let temp_file = TempFile::new("read-at-overflow");
+        let storage = Storage::create_or_open(temp_file.path(), None, true).unwrap();
+
+        let mut data = [0];
+        let error = storage.read_at(u64::MAX, &mut data).unwrap_err();
+
+        assert!(matches!(
+            error,
+            StorageError::Io(error) if error.kind() == std::io::ErrorKind::InvalidInput
+        ));
     }
 }

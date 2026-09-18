@@ -1,7 +1,9 @@
 use super::chunks::{ChunkRange, calculate_chunks};
 use super::model::{DownloadAction, DownloadSnapshot, DownloadStatus};
-use super::worker::{WorkerError, WorkerMsg, spawn_chunk_worker, spawn_stream_worker};
-use crate::client::{HttpClient, RemoteFileInfo};
+use super::worker::{
+    OVERLAP_BYTES, WorkerError, WorkerMsg, spawn_chunk_worker, spawn_stream_worker,
+};
+use crate::client::{ClientError, HttpClient, RemoteFileInfo, is_strong_etag};
 use crate::storage::{Storage, StorageError};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -15,12 +17,79 @@ enum FetchInfoKind {
         num_chunks: usize,
     },
     Resume,
+    Restart,
+    Complete,
 }
 
 struct FetchInfoMsg {
     session_id: u64,
     kind: FetchInfoKind,
-    result: Result<RemoteFileInfo, crate::client::ClientError>,
+    result: Result<RemoteFileInfo, WorkerError>,
+}
+
+struct SavedDownload {
+    info: RemoteFileInfo,
+    storage: Storage,
+    chunks: Vec<(ChunkRange, u64)>,
+}
+
+impl SavedDownload {
+    fn new(info: &RemoteFileInfo, storage: &Storage, chunks: &[ActiveChunk]) -> Self {
+        Self {
+            info: info.clone(),
+            storage: storage.clone(),
+            chunks: chunks
+                .iter()
+                .map(|chunk| (chunk.range, chunk.downloaded))
+                .collect(),
+        }
+    }
+
+    async fn verify(
+        &self,
+        client: &HttpClient,
+        url: &str,
+        latest: &RemoteFileInfo,
+    ) -> Result<(), WorkerError> {
+        if !uses_range_workers(latest) || !self.info.resume_metadata_matches(latest) {
+            return Err(ClientError::ContentChanged.into());
+        }
+        if latest.etag.as_deref().is_some_and(is_strong_etag) {
+            return Ok(());
+        }
+        let total_size = latest
+            .content_length
+            .ok_or(WorkerError::InvalidRange("Missing range size"))?;
+        // First/last 4 KiB per saved chunk are a consistency heuristic, not a whole-file proof.
+        for &(range, downloaded) in &self.chunks {
+            if downloaded == 0 {
+                continue;
+            }
+            let end = range
+                .start
+                .checked_add(downloaded)
+                .filter(|end| *end <= total_size && *end - 1 <= range.end)
+                .ok_or(WorkerError::InvalidRange("Invalid saved chunk progress"))?;
+            let length = downloaded.min(OVERLAP_BYTES);
+            let mut starts = vec![range.start];
+            if end - length != range.start {
+                starts.push(end - length);
+            }
+            for start in starts {
+                let storage = self.storage.clone();
+                let expected = tokio::task::spawn_blocking(move || {
+                    let mut bytes = vec![0; length as usize];
+                    storage.read_at(start, &mut bytes)?;
+                    Ok::<_, StorageError>(bytes)
+                })
+                .await??;
+                client
+                    .verify_range(url, start, &expected, total_size, latest.resume_validator())
+                    .await?;
+            }
+        }
+        Ok(())
+    }
 }
 
 struct ActiveChunk {
@@ -36,6 +105,7 @@ struct ActiveChunk {
 
 const MIN_SPLIT_BYTES: u64 = 256 * 1024;
 const MAX_CHUNK_RETRIES: u8 = 3;
+const MAX_CONTENT_RESTARTS: u8 = 2;
 const STALL_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Error)]
@@ -151,11 +221,39 @@ fn spawn_info_fetch(
     client: HttpClient,
     mut cancel_rx: watch::Receiver<bool>,
     info_tx: mpsc::Sender<FetchInfoMsg>,
+    saved: Option<SavedDownload>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let result = tokio::select! {
             _ = cancel_rx.changed() => return,
-            result = client.fetch_info(&url) => result,
+            result = async {
+                let mut retries = 0;
+                loop {
+                    let attempt: Result<_, WorkerError> = async {
+                        let info = if matches!(kind, FetchInfoKind::Complete)
+                            && let Some(saved) = &saved
+                            && (!uses_range_workers(&saved.info)
+                                || saved.info.etag.as_deref().is_some_and(is_strong_etag))
+                        {
+                            saved.info.clone()
+                        } else {
+                            client.fetch_info(&url).await?
+                        };
+                        if let Some(saved) = &saved && uses_range_workers(&saved.info) {
+                            saved.verify(&client, &url, &info).await?;
+                        }
+                        Ok(info)
+                    }.await;
+                    if saved.is_some() && retries < MAX_CHUNK_RETRIES
+                        && attempt.as_ref().is_err_and(|error| error.is_retryable())
+                    {
+                        retries += 1;
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        continue;
+                    }
+                    break attempt;
+                }
+            } => result,
         };
 
         if *cancel_rx.borrow() {
@@ -182,12 +280,9 @@ async fn wait_for_active_tasks(
     }
 }
 
+// Byte samples mitigate changing sources without claiming full-file identity.
 fn uses_range_workers(info: &RemoteFileInfo) -> bool {
     info.accepts_ranges && matches!(info.content_length, Some(total_size) if total_size > 0)
-}
-
-fn is_resumable(info: &RemoteFileInfo) -> bool {
-    uses_range_workers(info) && info.resume_validator().is_some()
 }
 
 // explicit session inputs keep worker creation independent of coordinator ownership.
@@ -305,12 +400,13 @@ fn rebalance_workers(
     cancel_tx: &watch::Sender<bool>,
     worker_tx: &mpsc::Sender<WorkerMsg>,
 ) -> Result<(), CoordinatorError> {
-    let (Some(total_size), Some(validator)) = (info.content_length, info.resume_validator()) else {
+    let Some(total_size) = info.content_length else {
         return Ok(());
     };
     if !uses_range_workers(info) {
         return Ok(());
     }
+    let validator = info.resume_validator();
     let max_workers = max_workers.max(1);
     let mut unfinished = chunks.iter().filter(|chunk| !chunk.is_done).count();
     for index in 0..chunks.len() {
@@ -328,19 +424,13 @@ fn rebalance_workers(
         .filter(|chunk| !chunk.is_done && chunk.yield_tx.is_none())
     {
         worker_handles.push(chunk.spawn(
-            session_id,
-            url,
-            client,
-            total_size,
-            Some(validator),
-            storage,
-            cancel_tx,
-            worker_tx,
+            session_id, url, client, total_size, validator, storage, cancel_tx, worker_tx,
         ));
     }
 
     // idle connections split the largest remaining range; no throughput model needed.
-    if unfinished < max_workers
+    if validator.is_some()
+        && unfinished < max_workers
         && !chunks.iter().any(|chunk| chunk.split_requested)
         && let Some(chunk) = chunks
             .iter_mut()
@@ -463,7 +553,9 @@ fn drain_cancelled_progress(
                 let can_resume = resumable
                     && retryable
                     && chunks.get(chunk_id).is_some_and(ActiveChunk::can_retry);
-                if !can_resume {
+                if source.is_content_changed() {
+                    error = Some(CoordinatorError::Worker { chunk_id, source });
+                } else if !can_resume {
                     error.get_or_insert(CoordinatorError::Worker { chunk_id, source });
                 }
             }
@@ -493,6 +585,8 @@ async fn run_coordinator(
     let mut active_chunks: Vec<ActiveChunk> = Vec::new();
     let mut worker_handles: Vec<JoinHandle<()>> = Vec::new();
     let mut info_handle: Option<JoinHandle<()>> = None;
+    let mut restart_required = false;
+    let mut content_restarts = 0;
 
     let (worker_tx, mut worker_rx) = mpsc::channel::<WorkerMsg>(256);
     let (info_tx, mut info_rx) = mpsc::channel::<FetchInfoMsg>(8);
@@ -505,6 +599,64 @@ async fn run_coordinator(
     let mut tick_interval = tokio::time::interval(Duration::from_millis(200));
 
     loop {
+        if restart_required {
+            restart_required = false;
+            let _ = cancel_tx.send(true);
+            wait_for_active_tasks(&mut info_handle, &mut worker_handles).await;
+            session_id += 1;
+            // Only truncate the already-owned file, after every old writer has stopped.
+            let reset = if let Some(storage) = &active_storage {
+                let storage = storage.clone();
+                tokio::task::spawn_blocking(move || storage.set_len(0))
+                    .await
+                    .map_err(CoordinatorError::StorageTask)
+                    .and_then(|result| result.map_err(CoordinatorError::Storage))
+            } else {
+                Err(CoordinatorError::InvalidProgress)
+            };
+            active_chunks.clear();
+            file_info = None;
+            current_speed = 0;
+            bytes_since_last_tick = 0;
+            last_tick = Instant::now();
+            status = match reset {
+                Err(error) => {
+                    DownloadStatus::Failed(format!("Could not restart changed file: {error}"))
+                }
+                Ok(()) if content_restarts >= MAX_CONTENT_RESTARTS => {
+                    DownloadStatus::Failed(format!(
+                        "Remote file keeps changing; stopped after {MAX_CONTENT_RESTARTS} automatic restarts"
+                    ))
+                }
+                Ok(()) => {
+                    content_restarts += 1;
+                    let (new_cancel_tx, _) = watch::channel(false);
+                    cancel_tx = new_cancel_tx;
+                    info_handle = Some(spawn_info_fetch(
+                        session_id,
+                        FetchInfoKind::Restart,
+                        current_url.clone(),
+                        client.clone(),
+                        cancel_tx.subscribe(),
+                        info_tx.clone(),
+                        None,
+                    ));
+                    DownloadStatus::Connecting
+                }
+            };
+            publish_snapshot(
+                &snapshot_tx,
+                &current_url,
+                &current_filename,
+                &current_path,
+                &status,
+                None,
+                0,
+                0,
+                None,
+                false,
+            );
+        }
         tokio::select! {
             action = action_rx.recv() => {
                 let Some(action) = action else {
@@ -524,6 +676,7 @@ async fn run_coordinator(
                         current_url = url;
                         current_path = save_path;
                         current_num_chunks = num_chunks;
+                        content_restarts = 0;
                         current_filename.clear();
                         status = DownloadStatus::Connecting;
                         active_chunks.clear();
@@ -556,6 +709,7 @@ async fn run_coordinator(
                             client.clone(),
                             cancel_tx.subscribe(),
                             info_tx.clone(),
+                            None,
                         ));
                     }
 
@@ -571,7 +725,7 @@ async fn run_coordinator(
                                 &mut active_chunks,
                                 range_download,
                                 total_size,
-                                file_info.as_ref().is_some_and(is_resumable),
+                                file_info.as_ref().is_some_and(uses_range_workers),
                             ) {
                               Ok(()) => {
                                 status = DownloadStatus::Paused;
@@ -587,10 +741,14 @@ async fn run_coordinator(
                                     calculate_downloaded(&active_chunks),
                                     0,
                                     None,
-                                    file_info.as_ref().is_none_or(is_resumable),
+                                    file_info.as_ref().is_none_or(uses_range_workers),
                                 );
                               }
                               Err(error) => {
+                                if matches!(&error, CoordinatorError::Worker { source, .. } if source.is_content_changed()) {
+                                    restart_required = true;
+                                    continue;
+                                }
                                 status = DownloadStatus::Failed(error.to_string());
                                 current_speed = 0;
                                 publish_snapshot(
@@ -611,7 +769,9 @@ async fn run_coordinator(
                     }
 
                     DownloadAction::Resume => {
-                        if status == DownloadStatus::Paused {
+                        if status == DownloadStatus::Paused
+                            || (matches!(status, DownloadStatus::Failed(_)) && snapshot_tx.borrow().resumable)
+                        {
                             wait_for_active_tasks(&mut info_handle, &mut worker_handles).await;
                             session_id += 1;
                             let sid = session_id;
@@ -632,7 +792,7 @@ async fn run_coordinator(
                                 calculate_downloaded(&active_chunks),
                                 0,
                                 None,
-                                file_info.as_ref().is_none_or(is_resumable),
+                                file_info.as_ref().is_none_or(uses_range_workers),
                             );
 
                             let kind = if active_storage.is_some() {
@@ -650,6 +810,8 @@ async fn run_coordinator(
                                 client.clone(),
                                 cancel_tx.subscribe(),
                                 info_tx.clone(),
+                                file_info.as_ref().zip(active_storage.as_ref()).filter(|(info, _)| uses_range_workers(info))
+                                    .map(|(info, storage)| SavedDownload::new(info, storage, &active_chunks)),
                             ));
                         }
                     }
@@ -684,12 +846,40 @@ async fn run_coordinator(
                     continue;
                 };
 
-                if msg.session_id != session_id || status != DownloadStatus::Connecting {
+                let expected_status = if matches!(msg.kind, FetchInfoKind::Complete) {
+                    DownloadStatus::Downloading
+                } else {
+                    DownloadStatus::Connecting
+                };
+                if msg.session_id != session_id || status != expected_status {
                     continue;
                 }
 
                 info_handle = None;
                 match (msg.kind, msg.result) {
+                    (FetchInfoKind::Complete, Ok(_)) => {
+                        let flush = if let Some(storage) = &active_storage {
+                            let storage = storage.clone();
+                            tokio::task::spawn_blocking(move || storage.sync())
+                                .await
+                                .map_err(CoordinatorError::StorageTask)
+                                .and_then(|result| result.map_err(CoordinatorError::Storage))
+                        } else {
+                            Ok(())
+                        };
+                        status = match flush {
+                            Ok(()) => DownloadStatus::Completed,
+                            Err(err) => DownloadStatus::Failed(format!("Failed to flush completed download: {err}")),
+                        };
+                        current_speed = 0;
+                        let downloaded = calculate_downloaded(&active_chunks);
+                        let total = file_info.as_ref().and_then(|info| info.content_length).unwrap_or(downloaded);
+                        publish_snapshot(
+                            &snapshot_tx, &current_url, &current_filename, &current_path,
+                            &status, Some(total), downloaded, 0, None,
+                            status == DownloadStatus::Completed,
+                        );
+                    }
                     (FetchInfoKind::Start { save_path, num_chunks }, Ok(info)) => {
                         let is_dir = save_path.is_dir()
                             || save_path.extension().is_none()
@@ -736,7 +926,7 @@ async fn run_coordinator(
                         match storage {
                             Ok(storage) => {
                                 let total_size = info.content_length;
-                                let resumable = is_resumable(&info);
+                                let resumable = uses_range_workers(&info);
                                 spawn_download_workers(
                                     session_id,
                                     &current_url,
@@ -783,7 +973,7 @@ async fn run_coordinator(
                             }
                         }
                     }
-                    (FetchInfoKind::Resume, Ok(info)) => {
+                    (kind @ (FetchInfoKind::Resume | FetchInfoKind::Restart), Ok(info)) => {
                         let Some(storage) = active_storage.as_ref() else {
                             status = DownloadStatus::Failed(
                                 "Missing storage for paused download".to_string(),
@@ -803,42 +993,38 @@ async fn run_coordinator(
                             continue;
                         };
 
-                        let was_resumable = file_info.as_ref().is_some_and(is_resumable);
-                        let resume = match (
-                            info.content_length,
-                            file_info
-                                .as_ref()
-                                .and_then(|previous| previous.resume_validator_for(&info)),
-                        ) {
-                            (Some(total_size), Some(validator))
+                        let was_resumable = !matches!(kind, FetchInfoKind::Restart) && file_info.as_ref().is_some_and(uses_range_workers);
+                        let resume = match info.content_length {
+                            Some(total_size)
                                 if uses_range_workers(&info)
+                                    && file_info.as_ref().is_some_and(|previous| previous.resume_metadata_matches(&info))
                                     && resume_chunks_are_valid(&active_chunks, total_size) =>
                             {
-                                Some((total_size, validator))
+                                Some(total_size)
                             }
                             _ => None,
                         };
 
                         let total_size = info.content_length;
                         if was_resumable {
-                            if let Some((total_size, validator)) = resume {
-                                file_info = Some(info);
+                            if let Some(total_size) = resume {
                                 status = DownloadStatus::Downloading;
                                 for chunk in &mut active_chunks {
-                                    if !chunk.is_done {
-                                        chunk.retries = 0;
-                                        worker_handles.push(chunk.spawn(
-                                            session_id,
-                                            &current_url,
-                                            &client,
-                                            total_size,
-                                            Some(&validator),
-                                            storage,
-                                            &cancel_tx,
-                                            &worker_tx,
-                                        ));
-                                    }
+                                    // Completed chunks acknowledge again so pausing final verification can resume.
+                                    chunk.is_done = false;
+                                    chunk.retries = 0;
+                                    worker_handles.push(chunk.spawn(
+                                        session_id,
+                                        &current_url,
+                                        &client,
+                                        total_size,
+                                        info.resume_validator(),
+                                        storage,
+                                        &cancel_tx,
+                                        &worker_tx,
+                                    ));
                                 }
+                                file_info = Some(info);
 
                                 publish_snapshot(
                                     &snapshot_tx,
@@ -880,6 +1066,7 @@ async fn run_coordinator(
                             .and_then(|result| result.map_err(CoordinatorError::Storage));
                             match resize {
                                 Ok(()) => {
+                                    active_chunks.clear();
                                     spawn_download_workers(
                                         session_id,
                                         &current_url,
@@ -904,7 +1091,7 @@ async fn run_coordinator(
                                         0,
                                         0,
                                         None,
-                                        file_info.as_ref().is_some_and(is_resumable),
+                                        file_info.as_ref().is_some_and(uses_range_workers),
                                     );
                                 }
                                 Err(err) => {
@@ -926,6 +1113,7 @@ async fn run_coordinator(
                         }
                     }
                     (FetchInfoKind::Start { .. }, Err(err)) => {
+                        let retryable = err.is_retryable();
                         status = DownloadStatus::Failed(err.to_string());
                         publish_snapshot(
                             &snapshot_tx,
@@ -937,10 +1125,15 @@ async fn run_coordinator(
                             0,
                             0,
                             None,
-                            false,
+                            retryable,
                         );
                     }
-                    (FetchInfoKind::Resume, Err(err)) => {
+                    (FetchInfoKind::Resume | FetchInfoKind::Restart | FetchInfoKind::Complete, Err(err)) => {
+                        if err.is_content_changed() {
+                            restart_required = true;
+                            continue;
+                        }
+                        let retryable = err.is_retryable();
                         status = DownloadStatus::Failed(err.to_string());
                         publish_snapshot(
                             &snapshot_tx,
@@ -952,7 +1145,7 @@ async fn run_coordinator(
                             calculate_downloaded(&active_chunks),
                             0,
                             None,
-                            file_info.as_ref().is_some_and(is_resumable),
+                            retryable,
                         );
                     }
                 }
@@ -1031,50 +1224,18 @@ async fn run_coordinator(
                         }
 
                         let all_done = !active_chunks.is_empty() && active_chunks.iter().all(|c| c.is_done);
-                        if all_done {
-                            let flush = if let Some(storage) = &active_storage {
-                                let storage = storage.clone();
-                                tokio::task::spawn_blocking(move || storage.sync())
-                                    .await
-                                    .map_err(CoordinatorError::StorageTask)
-                                    .and_then(|result| result.map_err(CoordinatorError::Storage))
-                            } else {
-                                Ok(())
-                            };
-                            if let Err(err) = flush {
-                                status = DownloadStatus::Failed(format!(
-                                    "Failed to flush completed download: {err}"
-                                ));
-                                current_speed = 0;
-                                publish_snapshot(
-                                    &snapshot_tx,
-                                    &current_url,
-                                    &current_filename,
-                                    &current_path,
-                                    &status,
-                                    file_info.as_ref().and_then(|info| info.content_length),
-                                    calculate_downloaded(&active_chunks),
-                                    0,
-                                    None,
-                                    false,
-                                );
-                                continue;
-                            }
-                            status = DownloadStatus::Completed;
-                            current_speed = 0;
-                            let total = file_info.as_ref().and_then(|i| i.content_length).unwrap_or_else(|| calculate_downloaded(&active_chunks));
-                            publish_snapshot(
-                                &snapshot_tx,
-                                &current_url,
-                                &current_filename,
-                                &current_path,
-                                &status,
-                                Some(total),
-                                total,
-                                0,
-                                None,
-                                true,
-                            );
+                        if all_done
+                            && let (Some(info), Some(storage)) = (&file_info, &active_storage)
+                        {
+                            info_handle = Some(spawn_info_fetch(
+                                session_id,
+                                FetchInfoKind::Complete,
+                                current_url.clone(),
+                                client.clone(),
+                                cancel_tx.subscribe(),
+                                info_tx.clone(),
+                                Some(SavedDownload::new(info, storage, &active_chunks)),
+                            ));
                         }
                     }
                     WorkerMsg::Yielded { session_id: sid, chunk_id } => {
@@ -1094,7 +1255,11 @@ async fn run_coordinator(
                         if sid != session_id || status != DownloadStatus::Downloading {
                             continue;
                         }
-                        if retryable && file_info.as_ref().is_some_and(is_resumable)
+                        if error.is_content_changed() {
+                            restart_required = true;
+                            continue;
+                        }
+                        if retryable && file_info.as_ref().is_some_and(uses_range_workers)
                             && let Some(chunk) = active_chunks.get_mut(chunk_id)
                             && chunk.can_retry()
                         {
@@ -1103,8 +1268,25 @@ async fn run_coordinator(
                             continue;
                         }
                         let _ = cancel_tx.send(true);
+                        wait_for_active_tasks(&mut info_handle, &mut worker_handles).await;
+                        // Retain other chunks' queued progress when a network failure stops the session.
+                        let drained = drain_cancelled_progress(
+                            &mut worker_rx, session_id, &mut active_chunks,
+                            file_info.as_ref().is_some_and(uses_range_workers),
+                            file_info.as_ref().and_then(|info| info.content_length),
+                            retryable,
+                        );
+                        if matches!(&drained, Err(CoordinatorError::Worker { source, .. }) if source.is_content_changed()) {
+                            restart_required = true;
+                            continue;
+                        }
                         status = DownloadStatus::Failed(format!("Stream #{chunk_id} error: {error}"));
                         current_speed = 0;
+                        let can_resume = retryable && match &drained {
+                            Ok(()) => true,
+                            Err(CoordinatorError::Worker { source, .. }) => source.is_retryable(),
+                            Err(_) => false,
+                        };
                         publish_snapshot(
                             &snapshot_tx,
                             &current_url,
@@ -1115,7 +1297,7 @@ async fn run_coordinator(
                             calculate_downloaded(&active_chunks),
                             0,
                             None,
-                            file_info.as_ref().is_some_and(is_resumable),
+                            can_resume && file_info.as_ref().is_some_and(uses_range_workers),
                         );
                     }
                 }
@@ -1143,7 +1325,7 @@ async fn run_coordinator(
                         publish_snapshot(
                             &snapshot_tx, &current_url, &current_filename, &current_path,
                             &status, info.content_length, calculate_downloaded(&active_chunks),
-                            0, None, is_resumable(info),
+                            0, None, uses_range_workers(info),
                         );
                         continue;
                     }
@@ -1176,7 +1358,7 @@ async fn run_coordinator(
                         None
                     };
 
-                    let resumable = file_info.as_ref().is_some_and(is_resumable);
+                    let resumable = file_info.as_ref().is_some_and(uses_range_workers);
 
                     publish_snapshot(
                         &snapshot_tx,

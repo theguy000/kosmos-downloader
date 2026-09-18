@@ -155,7 +155,8 @@ fn update_window_state(window: &MainWindow, snap: &DownloadSnapshot) {
         DownloadStatus::Downloading => (true, false, false),
         DownloadStatus::Paused => (false, true, false),
         DownloadStatus::Completed => (false, false, true),
-        DownloadStatus::Idle | DownloadStatus::Failed(_) => (false, false, false),
+        DownloadStatus::Failed(_) => (false, snap.resumable, false),
+        DownloadStatus::Idle => (false, false, false),
     };
 
     window.set_has_active_download(!matches!(snap.status, DownloadStatus::Idle));

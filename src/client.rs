@@ -15,6 +15,8 @@ pub enum ClientError {
     BadStatus(reqwest::StatusCode, String),
     #[error("Invalid range response: {0}")]
     InvalidRangeResponse(String),
+    #[error("Remote file content changed")]
+    ContentChanged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,24 +67,12 @@ impl RemoteFileInfo {
             })
     }
 
-    /// Returns a validator only when both metadata responses identify the same bytes.
-    pub(crate) fn resume_validator_for(&self, latest: &Self) -> Option<String> {
-        if self.content_length != latest.content_length {
-            return None;
-        }
-
-        if self.etag != latest.etag {
-            return None;
-        }
-
-        if let Some(etag) = latest.etag.as_deref().filter(|etag| is_strong_etag(etag)) {
-            return Some(etag.to_string());
-        }
-
-        match (&self.last_modified, &latest.last_modified) {
-            (Some(previous), Some(current)) if previous == current => Some(current.clone()),
-            _ => None,
-        }
+    /// Metadata agreement permits byte verification; dates alone do not prove identity.
+    pub(crate) fn resume_metadata_matches(&self, latest: &Self) -> bool {
+        self.content_length == latest.content_length
+            && self.etag == latest.etag
+            && (latest.etag.as_deref().is_some_and(is_strong_etag)
+                || self.last_modified == latest.last_modified)
     }
 }
 
@@ -198,13 +188,33 @@ impl HttpClient {
             req = req.header(RANGE, format!("bytes={start}-"));
         }
 
-        if requested_range && let Some(validator) = if_range {
+        // Dates are advisory: without proving their strength, do not send them as If-Range.
+        if requested_range && let Some(validator) = if_range.filter(|value| is_strong_etag(value)) {
             req = req.header(IF_RANGE, validator);
         }
 
         let response = req.send().await?;
         let status = response.status();
 
+        if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE
+            && let Some(expected_total) = expected_total
+        {
+            let total = response
+                .headers()
+                .get(CONTENT_RANGE)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| {
+                    let mut parts = value.split_whitespace();
+                    if !parts.next()?.eq_ignore_ascii_case("bytes") {
+                        return None;
+                    }
+                    let total = parts.next()?.strip_prefix("*/")?.parse::<u64>().ok()?;
+                    parts.next().is_none().then_some(total)
+                });
+            if total.is_some_and(|total| total != expected_total) {
+                return Err(ClientError::ContentChanged);
+            }
+        }
         if !status.is_success() {
             return Err(ClientError::BadStatus(
                 status,
@@ -215,6 +225,16 @@ impl HttpClient {
         // If a sub-range was requested, server must return 206 Partial Content.
         // Returning 200 OK means the server ignored the Range header and sent from byte 0.
         if requested_range && status != reqwest::StatusCode::PARTIAL_CONTENT {
+            if status == reqwest::StatusCode::OK
+                && let Some(validator) = if_range.filter(|value| is_strong_etag(value))
+                && response
+                    .headers()
+                    .get(ETAG)
+                    .and_then(|value| value.to_str().ok())
+                    != Some(validator)
+            {
+                return Err(ClientError::ContentChanged);
+            }
             return Err(ClientError::BadStatus(
                 status,
                 format!(
@@ -229,6 +249,45 @@ impl HttpClient {
 
         Ok(response)
     }
+
+    /// Compares a bounded saved sample, validating both headers and the entire response body.
+    pub(crate) async fn verify_range(
+        &self,
+        url: &str,
+        start: u64,
+        expected: &[u8],
+        total_size: u64,
+        validator: Option<&str>,
+    ) -> Result<(), ClientError> {
+        let end = u64::try_from(expected.len())
+            .ok()
+            .and_then(|length| length.checked_sub(1))
+            .and_then(|length| start.checked_add(length))
+            .ok_or_else(|| {
+                ClientError::InvalidRangeResponse("invalid verification range".into())
+            })?;
+        let mut response = self
+            .download_range_checked(url, start, Some(end), Some(total_size), validator)
+            .await?;
+        let mut remaining = expected;
+        while let Some(bytes) = response.chunk().await? {
+            if bytes.len() > remaining.len() {
+                return Err(ClientError::InvalidRangeResponse(
+                    "verification response exceeded its expected length".into(),
+                ));
+            }
+            if bytes.as_ref() != &remaining[..bytes.len()] {
+                return Err(ClientError::ContentChanged);
+            }
+            remaining = &remaining[bytes.len()..];
+        }
+        if !remaining.is_empty() {
+            return Err(ClientError::InvalidRangeResponse(
+                "verification response ended before its expected length".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -238,7 +297,7 @@ struct ContentRange {
     total: Option<u64>,
 }
 
-fn is_strong_etag(etag: &str) -> bool {
+pub(crate) fn is_strong_etag(etag: &str) -> bool {
     let Some(opaque_tag) = etag
         .strip_prefix('"')
         .and_then(|value| value.strip_suffix('"'))
@@ -287,6 +346,9 @@ fn validate_range_response(
     if let Some(expected_total) = expected_total
         && content_range.total != Some(expected_total)
     {
+        if content_range.total.is_some() {
+            return Err(ClientError::ContentChanged);
+        }
         return Err(ClientError::InvalidRangeResponse(format!(
             "range total is {:?}, expected {expected_total}",
             content_range.total
@@ -320,9 +382,16 @@ fn validate_range_response(
         && let Some(etag) = headers.get(ETAG).and_then(|value| value.to_str().ok())
         && etag != validator
     {
-        return Err(ClientError::InvalidRangeResponse(
-            "response ETag does not match the If-Range validator".to_string(),
-        ));
+        return Err(ClientError::ContentChanged);
+    }
+
+    if let Some(validator) = if_range.filter(|validator| !is_strong_etag(validator))
+        && let Some(modified) = headers
+            .get(LAST_MODIFIED)
+            .and_then(|value| value.to_str().ok())
+        && modified != validator
+    {
+        return Err(ClientError::ContentChanged);
     }
 
     Ok(())
@@ -478,6 +547,67 @@ fn urlencoding_decode(s: &str) -> String {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn verification_validates_sample_content_and_exact_body_length() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        for (body, outcome, unsatisfied_range) in [
+            ("4\r\nabcd\r\n0\r\n\r\n", "match", None),
+            ("4\r\nabXd\r\n0\r\n\r\n", "changed", None),
+            ("2\r\nab\r\n0\r\n\r\n", "invalid", None),
+            ("5\r\nabcde\r\n0\r\n\r\n", "invalid", None),
+            ("0\r\n\r\n", "changed", Some("bytes */7")),
+            ("0\r\n\r\n", "status", Some("bytes */8")),
+            ("0\r\n\r\n", "status", Some("bytes */invalid")),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}/file", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 2048];
+                let mut length = 0;
+                while !request[..length].windows(4).any(|part| part == b"\r\n\r\n") {
+                    let read = socket.read(&mut request[length..]).await.unwrap();
+                    assert!(read > 0);
+                    length += read;
+                }
+                assert!(
+                    !String::from_utf8_lossy(&request[..length])
+                        .to_ascii_lowercase()
+                        .contains("\r\nif-range:"),
+                    "an unproven date must not be sent as If-Range"
+                );
+                let status = if unsatisfied_range.is_some() {
+                    "416 Range Not Satisfiable"
+                } else {
+                    "206 Partial Content"
+                };
+                let range = unsatisfied_range.unwrap_or("bytes 2-5/8");
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Range: {range}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{body}"
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            });
+            let result = HttpClient::new()
+                .verify_range(&url, 2, b"abcd", 8, Some("Wed, 16 Sep 2026 12:00:00 GMT"))
+                .await;
+            match outcome {
+                "match" => assert!(result.is_ok()),
+                "changed" => assert!(matches!(result, Err(ClientError::ContentChanged))),
+                "status" => assert!(matches!(
+                    result,
+                    Err(ClientError::BadStatus(
+                        reqwest::StatusCode::RANGE_NOT_SATISFIABLE,
+                        _
+                    ))
+                )),
+                _ => assert!(matches!(result, Err(ClientError::InvalidRangeResponse(_)))),
+            }
+            server.await.unwrap();
+        }
+    }
+
     #[test]
     fn metadata_headers_preserve_fields_and_handle_missing_values() {
         use reqwest::header::{HeaderMap, HeaderValue};
@@ -619,7 +749,7 @@ mod tests {
     }
 
     #[test]
-    fn resume_requires_matching_resource_identity() {
+    fn resume_requires_matching_metadata_before_byte_verification() {
         let mut previous = RemoteFileInfo {
             content_length: Some(8),
             accepts_ranges: true,
@@ -627,37 +757,31 @@ mod tests {
             etag: Some("\"v1\"".into()),
             last_modified: None,
         };
-        assert_eq!(
-            previous.resume_validator_for(&previous).as_deref(),
-            Some("\"v1\"")
-        );
+        assert!(previous.resume_metadata_matches(&previous));
         let mut latest = previous.clone();
         latest.content_length = Some(9);
-        assert!(previous.resume_validator_for(&latest).is_none());
+        assert!(!previous.resume_metadata_matches(&latest));
         latest.content_length = Some(8);
         latest.etag = Some("\"v2\"".into());
-        assert!(previous.resume_validator_for(&latest).is_none());
+        assert!(!previous.resume_metadata_matches(&latest));
         latest.etag = None;
-        assert!(previous.resume_validator_for(&latest).is_none());
+        assert!(!previous.resume_metadata_matches(&latest));
         for invalid in ["", "unquoted", "W/\"v1\"", "\"unclosed"] {
             previous.etag = Some(invalid.into());
-            assert!(
-                previous.resume_validator_for(&previous).is_none(),
-                "{invalid}"
-            );
+            assert!(previous.resume_metadata_matches(&previous), "{invalid}");
         }
         previous.etag = None;
-        assert!(previous.resume_validator_for(&previous).is_none());
+        assert!(previous.resume_metadata_matches(&previous));
         previous.last_modified = Some("Wed, 16 Sep 2026 12:00:00 GMT".into());
-        assert!(previous.resume_validator_for(&previous).is_some());
+        assert!(previous.resume_metadata_matches(&previous));
         previous.etag = Some("W/\"v1\"".into());
         latest = previous.clone();
         latest.etag = Some("W/\"v2\"".into());
-        assert!(previous.resume_validator_for(&latest).is_none());
+        assert!(!previous.resume_metadata_matches(&latest));
         previous.etag = None;
         latest = previous.clone();
         latest.last_modified = Some("Thu, 17 Sep 2026 12:00:00 GMT".into());
-        assert!(previous.resume_validator_for(&latest).is_none());
+        assert!(!previous.resume_metadata_matches(&latest));
     }
 
     #[test]
@@ -672,6 +796,19 @@ mod tests {
         headers.insert(ETAG, "\"v1\"".parse().unwrap());
         assert!(validate_range_response(&headers, 2, Some(3), Some(8), Some("\"v1\"")).is_ok());
         assert!(validate_range_response(&headers, 2, Some(3), Some(8), Some("\"v2\"")).is_err());
+        let modified = "Wed, 16 Sep 2026 12:00:00 GMT";
+        headers.insert(LAST_MODIFIED, modified.parse().unwrap());
+        assert!(validate_range_response(&headers, 2, Some(3), Some(8), Some(modified)).is_ok());
+        assert!(
+            validate_range_response(
+                &headers,
+                2,
+                Some(3),
+                Some(8),
+                Some("Thu, 17 Sep 2026 12:00:00 GMT")
+            )
+            .is_err()
+        );
         for invalid in [
             "items 2-3/8",
             "bytes 1-3/8",

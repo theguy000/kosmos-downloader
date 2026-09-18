@@ -1,9 +1,11 @@
 use super::chunks::ChunkRange;
-use crate::client::{ClientError, HttpClient};
+use crate::client::{ClientError, HttpClient, is_strong_etag};
 use crate::storage::{Storage, StorageError};
 use thiserror::Error;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
+
+pub(super) const OVERLAP_BYTES: u64 = 4096;
 
 #[derive(Debug, Error)]
 pub(super) enum WorkerError {
@@ -23,6 +25,23 @@ pub(super) enum WorkerError {
     ResponseOverrun { expected: u64 },
     #[error("Unexpected EOF: received {received} of {expected} bytes")]
     UnexpectedEof { received: u64, expected: u64 },
+}
+
+impl WorkerError {
+    pub(super) fn is_content_changed(&self) -> bool {
+        matches!(self, Self::Client(ClientError::ContentChanged))
+    }
+
+    pub(super) fn is_retryable(&self) -> bool {
+        match self {
+            Self::Client(ClientError::Http(error)) | Self::ResponseBody(error) => {
+                is_retryable_body_error(error)
+            }
+            Self::Client(error) => is_retryable_client_error(error),
+            Self::UnexpectedEof { .. } => true,
+            _ => false,
+        }
+    }
 }
 
 pub(super) enum WorkerMsg {
@@ -77,7 +96,9 @@ fn is_retryable_client_error(error: &ClientError) -> bool {
                 || *status == reqwest::StatusCode::TOO_MANY_REQUESTS
                 || status.is_server_error()
         }
-        ClientError::InvalidUrl(_) | ClientError::InvalidRangeResponse(_) => false,
+        ClientError::InvalidUrl(_)
+        | ClientError::InvalidRangeResponse(_)
+        | ClientError::ContentChanged => false,
     }
 }
 
@@ -100,14 +121,19 @@ async fn send_yielded(
 
 #[derive(Clone, Copy)]
 enum BodyCopyMode {
-    Range { expected_bytes: u64 },
-    Stream { expected_bytes: Option<u64> },
+    Range {
+        expected_bytes: u64,
+        write_start: u64,
+    },
+    Stream {
+        expected_bytes: Option<u64>,
+    },
 }
 
 impl BodyCopyMode {
     fn expected_bytes(self) -> Option<u64> {
         match self {
-            Self::Range { expected_bytes } => Some(expected_bytes),
+            Self::Range { expected_bytes, .. } => Some(expected_bytes),
             Self::Stream { expected_bytes } => expected_bytes,
         }
     }
@@ -220,14 +246,34 @@ async fn copy_response_body(
                     .await;
                     return;
                 };
+                let overlap = match mode {
+                    BodyCopyMode::Range { write_start, .. } => {
+                        write_start.saturating_sub(current_offset).min(len) as usize
+                    }
+                    BodyCopyMode::Stream { .. } => 0,
+                };
+                let bytes_delta = len - overlap as u64;
+                // Verify the overlap from this same response before appending any new bytes.
                 // Do not select cancellation here: a started write must finish before this worker exits.
                 let write_result = tokio::task::spawn_blocking({
                     let storage = storage.clone();
-                    move || storage.write_at(current_offset, &bytes)
+                    move || -> Result<(), WorkerError> {
+                        if overlap > 0 {
+                            let mut saved = vec![0; overlap];
+                            storage.read_at(current_offset, &mut saved)?;
+                            if saved != bytes[..overlap] {
+                                return Err(ClientError::ContentChanged.into());
+                            }
+                        }
+                        if overlap < bytes.len() {
+                            storage.write_at(current_offset + overlap as u64, &bytes[overlap..])?;
+                        }
+                        Ok(())
+                    }
                 })
                 .await
                 .map_err(WorkerError::StorageTask)
-                .and_then(|result| result.map_err(WorkerError::Storage));
+                .and_then(|result| result);
                 if let Err(error) = write_result {
                     let _ = send_worker_msg(
                         worker_tx,
@@ -244,16 +290,17 @@ async fn copy_response_body(
                 }
                 current_offset = next_offset;
                 received += len;
-                if !send_worker_msg(
-                    worker_tx,
-                    cancel_rx,
-                    WorkerMsg::Progress {
-                        session_id,
-                        chunk_id,
-                        bytes_delta: len,
-                    },
-                )
-                .await
+                if bytes_delta > 0
+                    && !send_worker_msg(
+                        worker_tx,
+                        cancel_rx,
+                        WorkerMsg::Progress {
+                            session_id,
+                            chunk_id,
+                            bytes_delta,
+                        },
+                    )
+                    .await
                 {
                     return;
                 }
@@ -423,7 +470,14 @@ pub(super) fn spawn_chunk_worker(
             .await;
             return;
         };
-        let expected_bytes = chunk_size - initial_downloaded;
+        // Bounded overlap catches local changes, not changes elsewhere in the file.
+        let overlap = if if_range.as_deref().is_some_and(is_strong_etag) {
+            0
+        } else {
+            initial_downloaded.min(OVERLAP_BYTES)
+        };
+        let request_start = start - overlap;
+        let expected_bytes = chunk_size - initial_downloaded + overlap;
 
         let response = loop {
             if *cancel_rx.borrow() {
@@ -444,7 +498,7 @@ pub(super) fn spawn_chunk_worker(
                 }
                 res = client.download_range_checked(
                     &url,
-                    start,
+                    request_start,
                     Some(range.end),
                     Some(total_size),
                     if_range.as_deref(),
@@ -476,8 +530,11 @@ pub(super) fn spawn_chunk_worker(
 
         copy_response_body(
             response,
-            start,
-            BodyCopyMode::Range { expected_bytes },
+            request_start,
+            BodyCopyMode::Range {
+                expected_bytes,
+                write_start: start,
+            },
             session_id,
             chunk_id,
             &storage,
@@ -759,6 +816,61 @@ mod tests {
         assert!(done);
         assert_eq!(std::fs::read(temp_file.path()).unwrap(), b"unknown length");
         assert_eq!(std::fs::metadata(temp_file.path()).unwrap().len(), 14);
+    }
+
+    #[tokio::test]
+    async fn resumed_range_checks_overlap_before_writing_or_counting_new_bytes() {
+        for changed in [false, true] {
+            let temp_file = TempFile::new("resume-overlap");
+            let storage = Storage::create_or_open(temp_file.path(), Some(11), true).unwrap();
+            storage.write_at(0, b"preabcde000").unwrap();
+            let middle: &[u8] = if changed { b"cDfX" } else { b"cdeX" };
+            let (url, server) = start_response_server(chunked_response(
+                "206 Partial Content",
+                "Content-Range: bytes 3-10/11\r\n",
+                &[b"ab", middle, b"YZ"],
+            ));
+            let (_cancel_tx, cancel_rx) = watch::channel(false);
+            let (_yield_tx, yield_rx) = watch::channel(false);
+            let (worker_tx, mut worker_rx) = tokio::sync::mpsc::channel(8);
+            join_worker(spawn_chunk_worker(
+                48,
+                ChunkRange {
+                    id: 0,
+                    start: 3,
+                    end: 10,
+                },
+                5,
+                11,
+                url,
+                HttpClient::new(),
+                storage,
+                None,
+                cancel_rx,
+                yield_rx,
+                worker_tx,
+            ))
+            .await;
+            server.join().unwrap();
+            let messages = take_messages(&mut worker_rx);
+            if changed {
+                let (error, retryable) = only_error(messages, 48, 0);
+                assert!(error.is_content_changed());
+                assert!(!retryable);
+                assert_eq!(std::fs::read(temp_file.path()).unwrap(), b"preabcde000");
+            } else {
+                let added: u64 = messages
+                    .iter()
+                    .filter_map(|message| match message {
+                        WorkerMsg::Progress { bytes_delta, .. } => Some(bytes_delta),
+                        _ => None,
+                    })
+                    .sum();
+                assert_eq!(added, 3, "overlap must not inflate progress");
+                assert!(matches!(messages.last(), Some(WorkerMsg::Done { .. })));
+                assert_eq!(std::fs::read(temp_file.path()).unwrap(), b"preabcdeXYZ");
+            }
+        }
     }
 
     #[tokio::test]

@@ -27,7 +27,9 @@
 
 ## Download Safety
 - Validate range response status, `Content-Range`, and expected byte counts; never write a full-body response as a requested chunk.
-- Before resuming, validate saved ranges and remote resource identity; do not combine bytes from different resource versions.
+- Before resuming, validate saved ranges and remote resource identity; never knowingly combine bytes from different resource versions.
+- Without a strong ETag, sampling-based checks are an explicit exception for ranged resume and parallel downloads: validate remote metadata, sample the first and last saved bytes of every chunk before resume and completion, and verify a bounded overlap before appending to a partial chunk. Sampling can miss changes outside the checked regions and cannot guarantee whole-file identity.
+- A detected content mismatch must stop all old writers, discard the old partial data, and restart from byte zero. Limit automatic content-change recovery to two restarts; retain recoverable partial data for temporary network failures instead.
 - Write chunks directly at validated, non-overlapping offsets, pre-allocating when the total size is known. Avoid merge passes.
 - Never silently overwrite unrelated files. Preserve recoverable partial data on failure or cancellation, and report completion only after all writes and required flushes succeed.
 

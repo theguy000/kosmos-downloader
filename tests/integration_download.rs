@@ -3,7 +3,7 @@ use kosmos_downloader::engine::{DownloadAction, DownloadEngine, DownloadSnapshot
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -69,12 +69,16 @@ async fn write_metadata_response(
     socket: &mut TcpStream,
     total_size: usize,
     etag: Option<&str>,
+    last_modified: Option<&str>,
 ) -> bool {
     let etag = etag
         .map(|value| format!("ETag: {value}\r\n"))
         .unwrap_or_default();
+    let last_modified = last_modified
+        .map(|value| format!("Last-Modified: {value}\r\n"))
+        .unwrap_or_default();
     let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Length: {total_size}\r\nAccept-Ranges: bytes\r\n{etag}Connection: close\r\n\r\n"
+        "HTTP/1.1 200 OK\r\nContent-Length: {total_size}\r\nAccept-Ranges: bytes\r\n{etag}{last_modified}Connection: close\r\n\r\n"
     );
     socket.write_all(response.as_bytes()).await.is_ok()
 }
@@ -84,12 +88,16 @@ async fn write_range_headers(
     range: TestRange,
     total_size: usize,
     etag: Option<&str>,
+    last_modified: Option<&str>,
 ) -> bool {
     let etag = etag
         .map(|value| format!("ETag: {value}\r\n"))
         .unwrap_or_default();
+    let last_modified = last_modified
+        .map(|value| format!("Last-Modified: {value}\r\n"))
+        .unwrap_or_default();
     let response = format!(
-        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {}-{}/{total_size}\r\nContent-Length: {}\r\n{etag}Connection: close\r\n\r\n",
+        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {}-{}/{total_size}\r\nContent-Length: {}\r\n{etag}{last_modified}Connection: close\r\n\r\n",
         range.start,
         range.end,
         range.len()
@@ -102,8 +110,9 @@ async fn write_range_response(
     payload: &[u8],
     range: TestRange,
     etag: Option<&str>,
+    last_modified: Option<&str>,
 ) -> bool {
-    write_range_headers(socket, range, payload.len(), etag).await
+    write_range_headers(socket, range, payload.len(), etag, last_modified).await
         && socket
             .write_all(&payload[range.start..=range.end])
             .await
@@ -116,7 +125,7 @@ async fn write_prefix_then_drop(
     range: TestRange,
     etag: &str,
 ) {
-    if write_range_headers(socket, range, payload.len(), Some(etag)).await {
+    if write_range_headers(socket, range, payload.len(), Some(etag), None).await {
         let prefix_end = range.start + RETRY_PREFIX_SIZE.min(range.len());
         let _ = socket.write_all(&payload[range.start..prefix_end]).await;
         let _ = socket.flush().await;
@@ -267,13 +276,24 @@ async fn start_non_range_mock_server(payload: Vec<u8>) -> SocketAddr {
     .await
 }
 
-async fn start_changing_resource_server(initial: Vec<u8>, updated: Vec<u8>) -> SocketAddr {
-    let head_count = Arc::new(AtomicUsize::new(0));
+struct ChangingResourceServer {
+    addr: SocketAddr,
+    requests: Arc<Mutex<Vec<ObservedRangeRequest>>>,
+}
 
-    start_local_server(move |mut socket, request| {
+async fn start_changing_resource_server(
+    initial: Vec<u8>,
+    updated: Vec<u8>,
+) -> ChangingResourceServer {
+    let head_count = Arc::new(AtomicUsize::new(0));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let server_requests = Arc::clone(&requests);
+
+    let addr = start_local_server(move |mut socket, request| {
         let initial = initial.clone();
         let updated = updated.clone();
         let head_count = Arc::clone(&head_count);
+        let requests = Arc::clone(&server_requests);
         async move {
             let is_head = is_head_request(&request);
             let is_initial = if is_head {
@@ -317,6 +337,10 @@ async fn start_changing_resource_server(initial: Vec<u8>, updated: Vec<u8>) -> S
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(payload.len() - 1)
                 .min(payload.len() - 1);
+            requests.lock().unwrap().push(ObservedRangeRequest {
+                range: TestRange { start, end },
+                if_range: request_header(&request, "if-range").map(str::to_owned),
+            });
             let slice = &payload[start..=end];
             let response = format!(
                 "HTTP/1.1 206 Partial Content\r\n\
@@ -338,7 +362,217 @@ async fn start_changing_resource_server(initial: Vec<u8>, updated: Vec<u8>) -> S
             }
         }
     })
-    .await
+    .await;
+
+    ChangingResourceServer { addr, requests }
+}
+
+struct NoEtagResumeServer {
+    addr: SocketAddr,
+    payload: Arc<Mutex<Vec<u8>>>,
+    requests: Arc<Mutex<Vec<ObservedRangeRequest>>>,
+    release_stall: watch::Sender<bool>,
+}
+
+impl NoEtagResumeServer {
+    fn replace_payload(&self, updated: Vec<u8>) {
+        let mut payload = self.payload.lock().unwrap();
+        assert_eq!(payload.len(), updated.len());
+        *payload = updated;
+    }
+
+    fn release_stalled_response(&self) {
+        let _ = self.release_stall.send(true);
+    }
+}
+
+async fn start_no_etag_resume_server(
+    payload: Vec<u8>,
+    last_modified: Option<&str>,
+    stalled_range: TestRange,
+    stalled_prefix_len: usize,
+) -> NoEtagResumeServer {
+    assert!(stalled_prefix_len > 0 && stalled_prefix_len < stalled_range.len());
+    assert!(stalled_range.end < payload.len());
+
+    let payload = Arc::new(Mutex::new(payload));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let stalled_once = Arc::new(AtomicBool::new(false));
+    let (release_stall, release_stall_rx) = watch::channel(false);
+    let last_modified = last_modified.map(str::to_owned);
+    let server_payload = Arc::clone(&payload);
+    let server_requests = Arc::clone(&requests);
+    let server_stalled_once = Arc::clone(&stalled_once);
+
+    let addr = start_local_server(move |mut socket, request| {
+        let payload = Arc::clone(&server_payload);
+        let requests = Arc::clone(&server_requests);
+        let stalled_once = Arc::clone(&server_stalled_once);
+        let release_stall_rx = release_stall_rx.clone();
+        let last_modified = last_modified.clone();
+        async move {
+            if is_head_request(&request) {
+                let total_size = payload.lock().unwrap().len();
+                let _ = write_metadata_response(
+                    &mut socket,
+                    total_size,
+                    None,
+                    last_modified.as_deref(),
+                )
+                .await;
+                return;
+            }
+
+            let Some(range) = requested_byte_range(&request) else {
+                return;
+            };
+            let response_payload = payload.lock().unwrap().clone();
+            if range.end >= response_payload.len() {
+                return;
+            }
+            requests.lock().unwrap().push(ObservedRangeRequest {
+                range,
+                if_range: request_header(&request, "if-range").map(str::to_owned),
+            });
+
+            if range == stalled_range && !stalled_once.swap(true, Ordering::SeqCst) {
+                if write_range_headers(
+                    &mut socket,
+                    range,
+                    response_payload.len(),
+                    None,
+                    last_modified.as_deref(),
+                )
+                .await
+                {
+                    let prefix_end = range.start + stalled_prefix_len;
+                    if socket
+                        .write_all(&response_payload[range.start..prefix_end])
+                        .await
+                        .is_ok()
+                    {
+                        let _ = socket.flush().await;
+                        let mut discard = [0u8; 1];
+                        let mut release_stall_rx = release_stall_rx;
+                        tokio::select! {
+                            _ = wait_until_released(&mut release_stall_rx) => {}
+                            _ = socket.read(&mut discard) => {}
+                        }
+                    }
+                }
+            } else {
+                let _ = write_range_response(
+                    &mut socket,
+                    &response_payload,
+                    range,
+                    None,
+                    last_modified.as_deref(),
+                )
+                .await;
+            }
+        }
+    })
+    .await;
+
+    NoEtagResumeServer {
+        addr,
+        payload,
+        requests,
+        release_stall,
+    }
+}
+
+struct BetweenRangeChangeServer {
+    addr: SocketAddr,
+    initial_ranges_served: Arc<Notify>,
+    served_ranges: Arc<Mutex<Vec<(TestRange, bool)>>>,
+}
+
+async fn start_between_range_change_server(
+    initial: Vec<u8>,
+    updated: Vec<u8>,
+) -> BetweenRangeChangeServer {
+    assert_eq!(initial.len(), updated.len());
+    assert!(initial.len().is_multiple_of(2));
+
+    let midpoint = initial.len() / 2;
+    let first_range = TestRange {
+        start: 0,
+        end: midpoint - 1,
+    };
+    let second_range = TestRange {
+        start: midpoint,
+        end: initial.len() - 1,
+    };
+    let initial = Arc::new(initial);
+    let updated = Arc::new(updated);
+    let served_ranges = Arc::new(Mutex::new(Vec::new()));
+    let initial_ranges_served = Arc::new(Notify::new());
+    let served_initial_ranges = Arc::new(AtomicUsize::new(0));
+    let source_changed = Arc::new(AtomicBool::new(false));
+    let (switch_tx, switch_rx) = watch::channel(false);
+    let server_initial = Arc::clone(&initial);
+    let server_updated = Arc::clone(&updated);
+    let server_served_ranges = Arc::clone(&served_ranges);
+    let server_initial_ranges_served = Arc::clone(&initial_ranges_served);
+    let server_served_initial_ranges = Arc::clone(&served_initial_ranges);
+    let server_source_changed = Arc::clone(&source_changed);
+
+    let addr = start_local_server(move |mut socket, request| {
+        let initial = Arc::clone(&server_initial);
+        let updated = Arc::clone(&server_updated);
+        let served_ranges = Arc::clone(&server_served_ranges);
+        let initial_ranges_served = Arc::clone(&server_initial_ranges_served);
+        let served_initial_ranges = Arc::clone(&server_served_initial_ranges);
+        let source_changed = Arc::clone(&server_source_changed);
+        let switch_tx = switch_tx.clone();
+        let switch_rx = switch_rx.clone();
+        async move {
+            if is_head_request(&request) {
+                let _ = write_metadata_response(&mut socket, initial.len(), None, None).await;
+                return;
+            }
+
+            let Some(range) = requested_byte_range(&request) else {
+                return;
+            };
+            if range.end >= initial.len() {
+                return;
+            }
+
+            let (response_written, served_updated) = if range == first_range
+                && !source_changed.swap(true, Ordering::SeqCst)
+            {
+                let result = write_range_response(&mut socket, &initial, range, None, None).await;
+                let _ = switch_tx.send(true);
+                (result, false)
+            } else {
+                if !source_changed.load(Ordering::SeqCst) {
+                    let mut switch_rx = switch_rx;
+                    wait_until_released(&mut switch_rx).await;
+                }
+                (
+                    write_range_response(&mut socket, &updated, range, None, None).await,
+                    true,
+                )
+            };
+            served_ranges.lock().unwrap().push((range, served_updated));
+
+            if (range == first_range || range == second_range)
+                && response_written
+                && served_initial_ranges.fetch_add(1, Ordering::SeqCst) == 1
+            {
+                initial_ranges_served.notify_one();
+            }
+        }
+    })
+    .await;
+
+    BetweenRangeChangeServer {
+        addr,
+        initial_ranges_served,
+        served_ranges,
+    }
 }
 
 struct DynamicSplitServer {
@@ -397,7 +631,7 @@ async fn start_dynamic_split_server(
         let child_release_rx = child_release_rx.clone();
         async move {
             if is_head_request(&request) {
-                let _ = write_metadata_response(&mut socket, payload.len(), validator.as_deref()).await;
+                let _ = write_metadata_response(&mut socket, payload.len(), validator.as_deref(), None).await;
                 return;
             }
 
@@ -413,7 +647,7 @@ async fn start_dynamic_split_server(
             });
 
             if range == first_chunk {
-                if !write_range_headers(&mut socket, range, payload.len(), validator.as_deref()).await {
+                if !write_range_headers(&mut socket, range, payload.len(), validator.as_deref(), None).await {
                     return;
                 }
                 if socket
@@ -442,7 +676,7 @@ async fn start_dynamic_split_server(
             } else if range == second_chunk {
                 let mut fast_release_rx = fast_release_rx;
                 wait_until_released(&mut fast_release_rx).await;
-                let _ = write_range_response(&mut socket, payload.as_slice(), range, validator.as_deref()).await;
+                let _ = write_range_response(&mut socket, payload.as_slice(), range, validator.as_deref(), None).await;
             } else {
                 child_seen.notify_one();
                 yield_late_body.notify_one();
@@ -453,7 +687,7 @@ async fn start_dynamic_split_server(
                 }
 
                 let mut child_release_rx = child_release_rx;
-                if write_range_headers(&mut socket, range, payload.len(), validator.as_deref()).await {
+                if write_range_headers(&mut socket, range, payload.len(), validator.as_deref(), None).await {
                     wait_until_released(&mut child_release_rx).await;
                     let _ = socket
                         .write_all(&payload.as_slice()[range.start..=range.end])
@@ -482,6 +716,7 @@ enum RetryBehavior {
     RecoverOnce,
     PersistentDrop,
     RejectSecond(RecoveryFault),
+    AlwaysChangedEtag,
     StallThenRecover,
 }
 
@@ -490,26 +725,37 @@ enum RecoveryFault {
     ChangedEtag,
     InvalidContentRange,
     StatusOk,
+    StatusOkChangedEtag,
 }
 
 struct RetryServer {
     addr: SocketAddr,
     requests: Arc<Mutex<Vec<ObservedRangeRequest>>>,
+    allow_recovery: Arc<AtomicBool>,
+}
+
+impl RetryServer {
+    fn allow_recovery(&self) {
+        self.allow_recovery.store(true, Ordering::SeqCst);
+    }
 }
 
 async fn start_retry_server(payload: Vec<u8>, behavior: RetryBehavior) -> RetryServer {
     let payload = Arc::new(payload);
     let requests = Arc::new(Mutex::new(Vec::new()));
     let attempts = Arc::new(AtomicUsize::new(0));
+    let allow_recovery = Arc::new(AtomicBool::new(false));
     let server_requests = Arc::clone(&requests);
+    let server_allow_recovery = Arc::clone(&allow_recovery);
 
     let addr = start_local_server(move |mut socket, request| {
         let payload = Arc::clone(&payload);
         let requests = Arc::clone(&server_requests);
         let attempts = Arc::clone(&attempts);
+        let allow_recovery = Arc::clone(&server_allow_recovery);
         async move {
             if is_head_request(&request) {
-                let _ = write_metadata_response(&mut socket, payload.len(), Some(RETRY_ETAG)).await;
+                let _ = write_metadata_response(&mut socket, payload.len(), Some(RETRY_ETAG), None).await;
                 return;
             }
 
@@ -530,17 +776,29 @@ async fn start_retry_server(payload: Vec<u8>, behavior: RetryBehavior) -> RetryS
                     if attempt == 0 {
                         write_prefix_then_drop(&mut socket, payload.as_slice(), range, RETRY_ETAG).await;
                     } else {
-                        let _ = write_range_response(&mut socket, payload.as_slice(), range, Some(RETRY_ETAG)).await;
+                        let _ = write_range_response(&mut socket, payload.as_slice(), range, Some(RETRY_ETAG), None).await;
                     }
                 }
                 RetryBehavior::PersistentDrop => {
-                    write_prefix_then_drop(&mut socket, payload.as_slice(), range, RETRY_ETAG).await;
+                    if allow_recovery.load(Ordering::SeqCst) {
+                        let _ = write_range_response(
+                            &mut socket,
+                            payload.as_slice(),
+                            range,
+                            Some(RETRY_ETAG),
+                            None,
+                        )
+                        .await;
+                    } else {
+                        write_prefix_then_drop(&mut socket, payload.as_slice(), range, RETRY_ETAG)
+                            .await;
+                    }
                 }
                 RetryBehavior::RejectSecond(_) if attempt == 0 => {
                     write_prefix_then_drop(&mut socket, payload.as_slice(), range, RETRY_ETAG).await;
                 }
                 RetryBehavior::RejectSecond(RecoveryFault::ChangedEtag) if attempt == 1 => {
-                    let _ = write_range_response(&mut socket, payload.as_slice(), range, Some("\"retry-v2\"")).await;
+                    let _ = write_range_response(&mut socket, payload.as_slice(), range, Some("\"retry-v2\""), None).await;
                 }
                 RetryBehavior::RejectSecond(RecoveryFault::InvalidContentRange) if attempt == 1 => {
                     let invalid_range = TestRange {
@@ -552,12 +810,20 @@ async fn start_retry_server(payload: Vec<u8>, behavior: RetryBehavior) -> RetryS
                         payload.as_slice(),
                         invalid_range,
                         Some(RETRY_ETAG),
+                        None,
                     )
                     .await;
                 }
-                RetryBehavior::RejectSecond(RecoveryFault::StatusOk) if attempt == 1 => {
+                RetryBehavior::RejectSecond(
+                    fault @ (RecoveryFault::StatusOk | RecoveryFault::StatusOkChangedEtag),
+                ) if attempt == 1 => {
+                    let etag = if matches!(fault, RecoveryFault::StatusOkChangedEtag) {
+                        "\"retry-v2\""
+                    } else {
+                        RETRY_ETAG
+                    };
                     let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nETag: {RETRY_ETAG}\r\nConnection: close\r\n\r\n",
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nETag: {etag}\r\nConnection: close\r\n\r\n",
                         range.len()
                     );
                     if socket.write_all(response.as_bytes()).await.is_ok() {
@@ -567,7 +833,7 @@ async fn start_retry_server(payload: Vec<u8>, behavior: RetryBehavior) -> RetryS
                     }
                 }
                 RetryBehavior::StallThenRecover if attempt == 0 => {
-                    if write_range_headers(&mut socket, range, payload.len(), Some(RETRY_ETAG)).await {
+                    if write_range_headers(&mut socket, range, payload.len(), Some(RETRY_ETAG), None).await {
                         let prefix_end = range.start + RETRY_PREFIX_SIZE.min(range.len());
                         if socket
                             .write_all(&payload.as_slice()[range.start..prefix_end])
@@ -580,15 +846,29 @@ async fn start_retry_server(payload: Vec<u8>, behavior: RetryBehavior) -> RetryS
                         }
                     }
                 }
+                RetryBehavior::AlwaysChangedEtag => {
+                    let _ = write_range_response(
+                        &mut socket,
+                        payload.as_slice(),
+                        range,
+                        Some("\"retry-v2\""),
+                        None,
+                    )
+                    .await;
+                }
                 RetryBehavior::RejectSecond(_) | RetryBehavior::StallThenRecover => {
-                    let _ = write_range_response(&mut socket, payload.as_slice(), range, Some(RETRY_ETAG)).await;
+                    let _ = write_range_response(&mut socket, payload.as_slice(), range, Some(RETRY_ETAG), None).await;
                 }
             }
         }
     })
     .await;
 
-    RetryServer { addr, requests }
+    RetryServer {
+        addr,
+        requests,
+        allow_recovery,
+    }
 }
 
 fn observed_requests(
@@ -830,8 +1110,13 @@ async fn metadata_uses_head_fields_or_range_probe_total() {
 async fn test_full_multiconnection_download() {
     let payload = generate_test_payload();
     let (request_tx, mut request_rx) = tokio::sync::mpsc::channel(4);
+    let initial_range_requests = Arc::new(AtomicUsize::new(0));
+    let server_payload = payload.clone();
+    let server_initial_range_requests = Arc::clone(&initial_range_requests);
     let server_addr = start_local_server(move |mut socket, request| {
         let request_tx = request_tx.clone();
+        let payload = server_payload.clone();
+        let initial_range_requests = Arc::clone(&server_initial_range_requests);
         async move {
             if is_head_request(&request) {
                 let response = format!(
@@ -840,7 +1125,14 @@ async fn test_full_multiconnection_download() {
                 );
                 socket.write_all(response.as_bytes()).await.unwrap();
             } else {
-                request_tx.send((socket, request)).await.unwrap();
+                let request_number = initial_range_requests.fetch_add(1, Ordering::SeqCst);
+                if request_number < 4 {
+                    request_tx.send((socket, request)).await.unwrap();
+                } else if let Some(range) = requested_byte_range(&request)
+                    && range.end < payload.len()
+                {
+                    let _ = write_range_response(&mut socket, &payload, range, None, None).await;
+                }
             }
         }
     })
@@ -1043,6 +1335,351 @@ async fn test_pause_and_resume_download() {
 }
 
 #[tokio::test]
+async fn no_etag_range_download_resumes_when_saved_bytes_match() {
+    let payload = generate_offset_payload(TEST_DATA_SIZE);
+    let saved_prefix_len = 16 * 1024;
+    let full_range = TestRange {
+        start: 0,
+        end: payload.len() - 1,
+    };
+    let server =
+        start_no_etag_resume_server(payload.clone(), None, full_range, saved_prefix_len).await;
+    let save_path = regression_save_path("no_etag_resume");
+    let _ = std::fs::remove_file(&save_path);
+
+    let engine = DownloadEngine::new();
+    let action_tx = engine.action_tx();
+    let mut snapshot_rx = engine.snapshot_rx();
+    action_tx
+        .send(DownloadAction::Start {
+            url: format!("http://{}/payload.bin", server.addr),
+            save_path: save_path.clone(),
+            num_chunks: 1,
+        })
+        .await
+        .unwrap();
+
+    wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(3),
+        "No-ETag download did not save its initial prefix",
+        |snap| {
+            snap.status == DownloadStatus::Downloading
+                && snap.downloaded_bytes >= saved_prefix_len as u64
+        },
+    )
+    .await;
+    action_tx.send(DownloadAction::Pause).await.unwrap();
+    let paused = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(3),
+        "No-ETag download did not pause",
+        |snap| snap.status == DownloadStatus::Paused,
+    )
+    .await;
+    assert!(
+        paused.resumable,
+        "Known-length range downloads must be resumable without an ETag"
+    );
+    let paused_bytes = usize::try_from(paused.downloaded_bytes).unwrap();
+    assert!(paused_bytes >= saved_prefix_len);
+    let request_count_before_resume = observed_requests(&server.requests).len();
+
+    action_tx.send(DownloadAction::Resume).await.unwrap();
+    let terminal = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(5),
+        "No-ETag resumed download did not reach a terminal state",
+        |snap| {
+            matches!(
+                snap.status,
+                DownloadStatus::Completed | DownloadStatus::Failed(_)
+            )
+        },
+    )
+    .await;
+    assert_eq!(
+        terminal.status,
+        DownloadStatus::Completed,
+        "No-ETag resume failed"
+    );
+
+    let requests = observed_requests(&server.requests);
+    let resumed_worker = requests[request_count_before_resume..]
+        .iter()
+        .find(|request| request.range.end == payload.len() - 1 && request.range.len() > 4096)
+        .expect("No-ETag resume did not request the remaining range");
+    assert_eq!(
+        resumed_worker.range.start,
+        paused_bytes - 4096,
+        "No-ETag resume must verify a bounded overlap in its worker response"
+    );
+    assert_eq!(std::fs::read(&save_path).unwrap(), payload);
+    let _ = std::fs::remove_file(&save_path);
+}
+
+#[tokio::test]
+async fn no_etag_resume_restarts_after_completed_chunk_changes() {
+    let initial = generate_offset_payload(TEST_DATA_SIZE * 3);
+    let chunk_size = initial.len() / 3;
+    let unfinished_range = TestRange {
+        start: 0,
+        end: chunk_size - 1,
+    };
+    let completed_range = TestRange {
+        start: chunk_size,
+        end: 2 * chunk_size - 1,
+    };
+    let trailing_completed_range = TestRange {
+        start: 2 * chunk_size,
+        end: initial.len() - 1,
+    };
+    let saved_prefix_len = 16 * 1024;
+    let mut updated = initial.clone();
+    updated[completed_range.start] ^= 0xff;
+    updated[completed_range.end] ^= 0xff;
+    let server = start_no_etag_resume_server(
+        initial.clone(),
+        Some("Wed, 16 Sep 2026 12:00:00 GMT"),
+        unfinished_range,
+        saved_prefix_len,
+    )
+    .await;
+    let save_path = regression_save_path("no_etag_changed_completed_chunk");
+    let _ = std::fs::remove_file(&save_path);
+
+    let engine = DownloadEngine::new();
+    let action_tx = engine.action_tx();
+    let mut snapshot_rx = engine.snapshot_rx();
+    action_tx
+        .send(DownloadAction::Start {
+            url: format!("http://{}/payload.bin", server.addr),
+            save_path: save_path.clone(),
+            num_chunks: 3,
+        })
+        .await
+        .unwrap();
+
+    wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(3),
+        "Completed and unfinished ranges did not save their initial bytes",
+        |snap| {
+            snap.status == DownloadStatus::Downloading
+                && snap.downloaded_bytes
+                    >= (completed_range.len() + trailing_completed_range.len() + saved_prefix_len)
+                        as u64
+        },
+    )
+    .await;
+    action_tx.send(DownloadAction::Pause).await.unwrap();
+    let paused = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(3),
+        "Changed no-ETag download did not pause",
+        |snap| snap.status == DownloadStatus::Paused,
+    )
+    .await;
+    assert!(paused.resumable);
+    let paused_file = std::fs::read(&save_path).unwrap();
+    assert_eq!(
+        &paused_file[completed_range.start..=completed_range.end],
+        &initial[completed_range.start..=completed_range.end],
+        "The middle range must be complete before resuming the unfinished range"
+    );
+    assert_eq!(
+        &paused_file[trailing_completed_range.start..=trailing_completed_range.end],
+        &initial[trailing_completed_range.start..=trailing_completed_range.end],
+    );
+    assert_eq!(
+        &paused_file[unfinished_range.start..unfinished_range.start + saved_prefix_len],
+        &initial[unfinished_range.start..unfinished_range.start + saved_prefix_len],
+    );
+
+    server.replace_payload(updated.clone());
+    let request_count_before_resume = observed_requests(&server.requests).len();
+    action_tx.send(DownloadAction::Resume).await.unwrap();
+    let terminal = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(5),
+        "Changed no-ETag resume did not restart and finish",
+        |snap| {
+            matches!(
+                snap.status,
+                DownloadStatus::Completed | DownloadStatus::Failed(_)
+            )
+        },
+    )
+    .await;
+    assert_eq!(
+        terminal.status,
+        DownloadStatus::Completed,
+        "Changed no-ETag resume must restart from zero"
+    );
+
+    let requests = observed_requests(&server.requests);
+    let resume_requests = &requests[request_count_before_resume..];
+    assert!(
+        resume_requests
+            .iter()
+            .any(|request| request.range == unfinished_range),
+        "Changed saved bytes must restart the first chunk from zero: {resume_requests:?}"
+    );
+    assert_eq!(
+        std::fs::read(&save_path).unwrap(),
+        updated,
+        "Restarted download must replace every old chunk with the new payload"
+    );
+    let _ = std::fs::remove_file(&save_path);
+}
+
+#[tokio::test]
+async fn no_etag_retry_restarts_after_saved_overlap_changes() {
+    let initial = generate_offset_payload(TEST_DATA_SIZE);
+    let saved_prefix_len = 16 * 1024;
+    let full_range = TestRange {
+        start: 0,
+        end: initial.len() - 1,
+    };
+    let mut updated = initial.clone();
+    updated[saved_prefix_len - 1024] ^= 0xff;
+    let server = start_no_etag_resume_server(initial, None, full_range, saved_prefix_len).await;
+    let save_path = regression_save_path("no_etag_overlap_change");
+    let _ = std::fs::remove_file(&save_path);
+
+    let engine = DownloadEngine::new();
+    let action_tx = engine.action_tx();
+    let mut snapshot_rx = engine.snapshot_rx();
+    action_tx
+        .send(DownloadAction::Start {
+            url: format!("http://{}/payload.bin", server.addr),
+            save_path: save_path.clone(),
+            num_chunks: 1,
+        })
+        .await
+        .unwrap();
+
+    wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(3),
+        "No-ETag download did not save its overlap prefix",
+        |snap| {
+            snap.status == DownloadStatus::Downloading
+                && snap.downloaded_bytes >= saved_prefix_len as u64
+        },
+    )
+    .await;
+    server.replace_payload(updated.clone());
+    server.release_stalled_response();
+
+    let terminal = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(5),
+        "Changed no-ETag overlap did not restart and finish",
+        |snap| {
+            matches!(
+                snap.status,
+                DownloadStatus::Completed | DownloadStatus::Failed(_)
+            )
+        },
+    )
+    .await;
+    assert_eq!(
+        terminal.status,
+        DownloadStatus::Completed,
+        "Changed overlap must restart instead of mixing source versions"
+    );
+
+    let requests = observed_requests(&server.requests);
+    assert!(
+        requests.iter().any(|request| {
+            request.range.start == saved_prefix_len - 4096 && request.range.end == full_range.end
+        }),
+        "Retry must request a bounded overlap before appending new bytes: {requests:?}"
+    );
+    assert!(
+        requests
+            .iter()
+            .filter(|request| request.range == full_range)
+            .count()
+            >= 2,
+        "Changed overlap must cause a fresh request from zero: {requests:?}"
+    );
+    assert_eq!(std::fs::read(&save_path).unwrap(), updated);
+    let _ = std::fs::remove_file(&save_path);
+}
+
+#[tokio::test]
+async fn no_validator_parallel_change_restarts_with_consistent_payload() {
+    let initial = vec![b'A'; TEST_DATA_SIZE];
+    let updated = vec![b'B'; TEST_DATA_SIZE];
+    let midpoint = initial.len() / 2;
+    let first_range = TestRange {
+        start: 0,
+        end: midpoint - 1,
+    };
+    let second_range = TestRange {
+        start: midpoint,
+        end: initial.len() - 1,
+    };
+    let server = start_between_range_change_server(initial.clone(), updated.clone()).await;
+    let save_path = regression_save_path("no_validator_parallel_change");
+    let _ = std::fs::remove_file(&save_path);
+
+    let engine = DownloadEngine::new();
+    let action_tx = engine.action_tx();
+    let mut snapshot_rx = engine.snapshot_rx();
+    action_tx
+        .send(DownloadAction::Start {
+            url: format!("http://{}/payload.bin", server.addr),
+            save_path: save_path.clone(),
+            num_chunks: 2,
+        })
+        .await
+        .unwrap();
+
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        server.initial_ranges_served.notified(),
+    )
+    .await
+    .expect("Initial parallel ranges were not served from different source versions");
+    let terminal = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(5),
+        "Changed no-validator parallel download did not restart and finish",
+        |snap| {
+            matches!(
+                snap.status,
+                DownloadStatus::Completed | DownloadStatus::Failed(_)
+            )
+        },
+    )
+    .await;
+    assert_eq!(
+        terminal.status,
+        DownloadStatus::Completed,
+        "Changed no-validator source must restart with one consistent payload"
+    );
+
+    let served_ranges = server.served_ranges.lock().unwrap().clone();
+    assert!(
+        served_ranges.contains(&(first_range, false)),
+        "The first initial range was not served from the original source"
+    );
+    assert!(
+        served_ranges.contains(&(second_range, true)),
+        "The second initial range was not served after the source changed"
+    );
+    assert_eq!(
+        std::fs::read(&save_path).unwrap(),
+        updated,
+        "Restarted parallel download must not retain the original first range"
+    );
+    let _ = std::fs::remove_file(&save_path);
+}
+
+#[tokio::test]
 async fn test_pause_during_connecting_restarts_metadata() {
     let payload = generate_test_payload();
     let server_addr =
@@ -1181,10 +1818,10 @@ async fn test_non_range_pause_restarts_from_zero() {
 }
 
 #[tokio::test]
-async fn test_changed_resource_refuses_resume_without_truncating_partial_file() {
+async fn changed_metadata_restarts_from_zero_with_new_payload() {
     let initial = vec![b'A'; TEST_DATA_SIZE];
     let updated = vec![b'B'; TEST_DATA_SIZE];
-    let server_addr = start_changing_resource_server(initial, updated).await;
+    let server = start_changing_resource_server(initial, updated.clone()).await;
     let save_path = std::env::temp_dir().join(format!(
         "kosmos_changed_resource_test_{}.bin",
         std::process::id()
@@ -1197,7 +1834,7 @@ async fn test_changed_resource_refuses_resume_without_truncating_partial_file() 
 
     action_tx
         .send(DownloadAction::Start {
-            url: format!("http://{server_addr}/payload.bin"),
+            url: format!("http://{}/payload.bin", server.addr),
             save_path: save_path.clone(),
             num_chunks: 1,
         })
@@ -1224,11 +1861,12 @@ async fn test_changed_resource_refuses_resume_without_truncating_partial_file() 
     let written_bytes = paused_file.iter().take_while(|&&byte| byte == b'A').count() as u64;
     assert_eq!(paused.downloaded_bytes, written_bytes);
 
+    let request_count_before_resume = observed_requests(&server.requests).len();
     action_tx.send(DownloadAction::Resume).await.unwrap();
     let terminal = wait_for_snapshot(
         &mut snapshot_rx,
         Duration::from_secs(3),
-        "Changed-resource resume did not reach a terminal state",
+        "Changed-resource resume did not restart and finish",
         |snap| {
             matches!(
                 snap.status,
@@ -1237,14 +1875,27 @@ async fn test_changed_resource_refuses_resume_without_truncating_partial_file() 
         },
     )
     .await;
-    match terminal.status {
-        DownloadStatus::Failed(message) => assert!(message.contains("Cannot safely resume")),
-        status => panic!("Expected a safe-resume failure, got {status:?}"),
-    }
+    assert_eq!(
+        terminal.status,
+        DownloadStatus::Completed,
+        "Changed metadata must restart instead of retaining the old partial file"
+    );
 
-    let saved = std::fs::read(&save_path).unwrap();
-    assert_eq!(saved[0], b'A');
-    assert!(!saved.contains(&b'B'));
+    let requests = observed_requests(&server.requests);
+    assert!(
+        requests[request_count_before_resume..]
+            .iter()
+            .any(|request| {
+                request.range
+                    == TestRange {
+                        start: 0,
+                        end: TEST_DATA_SIZE - 1,
+                    }
+                    && request.if_range.as_deref() == Some("\"v2\"")
+            }),
+        "Changed metadata must make a fresh strong-validator request from zero: {requests:?}"
+    );
+    assert_eq!(std::fs::read(&save_path).unwrap(), updated);
 
     let _ = std::fs::remove_file(&save_path);
 }
@@ -1472,7 +2123,7 @@ async fn dynamic_partitions_survive_pause_and_resume() {
 }
 
 #[tokio::test]
-async fn dynamic_split_requires_a_resume_validator() {
+async fn dynamic_split_without_strong_etag_does_not_redistribute_live_work() {
     let payload = generate_offset_payload(DYNAMIC_DATA_SIZE);
     let server = start_dynamic_split_server(payload, None).await;
     let save_path = regression_save_path("dynamic_split_no_validator");
@@ -1519,14 +2170,14 @@ async fn dynamic_split_requires_a_resume_validator() {
     wait_for_snapshot(
         &mut snapshot_rx,
         Duration::from_secs(2),
-        "non-resumable stalled download did not cancel",
+        "stalled no-ETag download did not cancel",
         |snap| snap.status == DownloadStatus::Idle,
     )
     .await;
 
     assert!(
         unexpected_child.is_err(),
-        "a download without a validator must not redistribute live work"
+        "a download without a strong ETag must not redistribute live work"
     );
     let requests = observed_requests(&server.requests);
     assert_eq!(requests.len(), 2);
@@ -1580,7 +2231,7 @@ async fn ranged_drop_retries_from_confirmed_offset_with_original_validator() {
 }
 
 #[tokio::test]
-async fn persistent_ranged_drops_exhaust_three_retries() {
+async fn retry_exhaustion_keeps_partial_bytes_for_manual_resume() {
     let payload = generate_offset_payload(512 * 1024);
     let server = start_retry_server(payload.clone(), RetryBehavior::PersistentDrop).await;
     let save_path = regression_save_path("retry_exhaustion");
@@ -1614,6 +2265,17 @@ async fn persistent_ranged_drops_exhaust_three_retries() {
         matches!(terminal.status, DownloadStatus::Failed(_)),
         "persistent drops must fail after the retry budget is exhausted"
     );
+    assert!(
+        terminal.resumable,
+        "A retryable network failure must retain a manually resumable partial download"
+    );
+    assert_eq!(terminal.downloaded_bytes, (RETRY_PREFIX_SIZE * 4) as u64);
+    let partial = std::fs::read(&save_path).unwrap();
+    assert_eq!(
+        &partial[..RETRY_PREFIX_SIZE * 4],
+        &payload[..RETRY_PREFIX_SIZE * 4],
+        "Retry exhaustion must retain the confirmed bytes"
+    );
     assert_retry_requests(
         &observed_requests(&server.requests),
         payload.len(),
@@ -1624,15 +2286,60 @@ async fn persistent_ranged_drops_exhaust_three_retries() {
             RETRY_PREFIX_SIZE * 3,
         ],
     );
+    server.allow_recovery();
+    action_tx.send(DownloadAction::Resume).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), snapshot_rx.changed())
+        .await
+        .expect("Manual resume did not leave the failed state")
+        .expect("Snapshot channel closed during manual resume");
+    let resumed = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(5),
+        "Manual resume after retry exhaustion did not reach a terminal state",
+        |snap| {
+            matches!(
+                snap.status,
+                DownloadStatus::Completed | DownloadStatus::Failed(_)
+            )
+        },
+    )
+    .await;
+    assert_eq!(
+        resumed.status,
+        DownloadStatus::Completed,
+        "Manual resume after a network failure failed; requests: {:?}",
+        observed_requests(&server.requests)
+    );
+    assert_retry_requests(
+        &observed_requests(&server.requests),
+        payload.len(),
+        &[
+            0,
+            RETRY_PREFIX_SIZE,
+            RETRY_PREFIX_SIZE * 2,
+            RETRY_PREFIX_SIZE * 3,
+            RETRY_PREFIX_SIZE * 4,
+        ],
+    );
+    assert_eq!(std::fs::read(&save_path).unwrap(), payload);
     let _ = std::fs::remove_file(&save_path);
 }
 
 #[tokio::test]
-async fn retry_recovery_rejects_invalid_range_responses() {
-    for (fault, label) in [
-        (RecoveryFault::ChangedEtag, "retry_changed_etag"),
-        (RecoveryFault::InvalidContentRange, "retry_invalid_range"),
-        (RecoveryFault::StatusOk, "retry_status_200"),
+async fn retry_recovery_restarts_changed_resources_but_rejects_invalid_responses() {
+    for (fault, label, restarts) in [
+        (RecoveryFault::ChangedEtag, "retry_changed_etag", true),
+        (
+            RecoveryFault::StatusOkChangedEtag,
+            "retry_status_200_changed_etag",
+            true,
+        ),
+        (
+            RecoveryFault::InvalidContentRange,
+            "retry_invalid_range",
+            false,
+        ),
+        (RecoveryFault::StatusOk, "retry_status_200", false),
     ] {
         let payload = generate_offset_payload(512 * 1024);
         let server = start_retry_server(payload.clone(), RetryBehavior::RejectSecond(fault)).await;
@@ -1663,19 +2370,85 @@ async fn retry_recovery_rejects_invalid_range_responses() {
             },
         )
         .await;
-        assert!(
-            matches!(terminal.status, DownloadStatus::Failed(_)),
-            "{label} recovery response must be fatal"
-        );
-        assert_retry_requests(
-            &observed_requests(&server.requests),
-            payload.len(),
-            &[0, RETRY_PREFIX_SIZE],
-        );
-        let saved = std::fs::read(&save_path).unwrap();
-        assert_eq!(&saved[..RETRY_PREFIX_SIZE], &payload[..RETRY_PREFIX_SIZE]);
+        if restarts {
+            assert_eq!(
+                terminal.status,
+                DownloadStatus::Completed,
+                "{label} must restart the changed resource"
+            );
+            assert_retry_requests(
+                &observed_requests(&server.requests),
+                payload.len(),
+                &[0, RETRY_PREFIX_SIZE, 0],
+            );
+            assert_eq!(std::fs::read(&save_path).unwrap(), payload);
+        } else {
+            assert!(
+                matches!(terminal.status, DownloadStatus::Failed(_)),
+                "{label} with the same ETag must remain fatal"
+            );
+            assert_retry_requests(
+                &observed_requests(&server.requests),
+                payload.len(),
+                &[0, RETRY_PREFIX_SIZE],
+            );
+            let saved = std::fs::read(&save_path).unwrap();
+            assert_eq!(&saved[..RETRY_PREFIX_SIZE], &payload[..RETRY_PREFIX_SIZE]);
+        }
         let _ = std::fs::remove_file(&save_path);
     }
+}
+
+#[tokio::test]
+async fn repeatedly_changed_resource_stops_after_two_restarts_and_clears_partial_file() {
+    let payload = generate_offset_payload(512 * 1024);
+    let server = start_retry_server(payload.clone(), RetryBehavior::AlwaysChangedEtag).await;
+    let save_path = regression_save_path("retry_changed_restart_budget");
+    let _ = std::fs::remove_file(&save_path);
+
+    let engine = DownloadEngine::new();
+    let action_tx = engine.action_tx();
+    let mut snapshot_rx = engine.snapshot_rx();
+    action_tx
+        .send(DownloadAction::Start {
+            url: format!("http://{}/payload.bin", server.addr),
+            save_path: save_path.clone(),
+            num_chunks: 1,
+        })
+        .await
+        .unwrap();
+
+    let terminal = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(5),
+        "Repeated content changes did not exhaust the restart budget",
+        |snap| {
+            matches!(
+                snap.status,
+                DownloadStatus::Completed | DownloadStatus::Failed(_)
+            )
+        },
+    )
+    .await;
+    match terminal.status {
+        DownloadStatus::Failed(message) => assert!(
+            message.contains("Remote file keeps changing"),
+            "Expected restart-budget failure, got: {message}"
+        ),
+        status => panic!("Repeatedly changing resource must not complete, got {status:?}"),
+    }
+    assert!(!terminal.resumable);
+    assert_retry_requests(
+        &observed_requests(&server.requests),
+        payload.len(),
+        &[0, 0, 0],
+    );
+    assert_eq!(
+        std::fs::metadata(&save_path).unwrap().len(),
+        0,
+        "Restart exhaustion must clear invalid partial bytes"
+    );
+    let _ = std::fs::remove_file(&save_path);
 }
 
 #[tokio::test]

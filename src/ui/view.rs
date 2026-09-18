@@ -1383,6 +1383,17 @@ mod tests {
             render();
             click(102.0, 50.0);
             assert_eq!(resumed.get(), 2, "Non-range downloads can restart");
+            snapshot.status = DownloadStatus::Failed("Offline".into());
+            snapshot.resumable = true;
+            super::super::update_window_state(&ui, &snapshot);
+            assert!(
+                ui.get_can_resume(),
+                "Network failures retain a resume action"
+            );
+            assert_eq!(ui.get_active_status(), "Failed");
+            snapshot.resumable = false;
+            super::super::update_window_state(&ui, &snapshot);
+            assert!(!ui.get_can_resume(), "Unsafe failures cannot resume");
             ui.set_selected_category(7);
             assert!(!ui.get_active_row_visible());
             assert!(!ui.get_can_resume(), "Hidden selection cannot be resumed");
