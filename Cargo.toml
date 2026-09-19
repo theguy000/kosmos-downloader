@@ -11,6 +11,9 @@ rfd = "0.17.2"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 
+[build-dependencies]
+winresource = "0.1"
+
 [dev-dependencies]
 slint = { version = "1", default-features = false, features = ["renderer-software"] }
 
