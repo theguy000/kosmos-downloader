@@ -233,6 +233,22 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         *clipboard.borrow_mut() = "https://example.com/replacement.zip".into();
         open_menu();
         render();
+        let paste_position =
+            slint::LogicalPosition::new(context_position.x + 100.0, context_position.y + 74.0);
+        window.dispatch_event(WindowEvent::PointerMoved {
+            position: paste_position,
+        });
+        window.dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(context_position.x + 210.0, paste_position.y),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Return.into(),
+        });
+        assert_eq!(
+            ui.get_url_text(),
+            "https://example.com/file.ziphttps://example.com/file.zip",
+            "Paste hover clears when the pointer leaves the row"
+        );
         click(context_position.x + 20.0, context_position.y + 74.0);
         assert_eq!(
             ui.get_url_text(),

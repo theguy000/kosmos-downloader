@@ -231,6 +231,7 @@ export component DialogInput inherits Rectangle {
 
     height: 36px;
     horizontal-stretch: 1;
+    clip: true;
     background: input.has-focus ? #303036 : #2b2b30;
     forward-focus: input;
     TouchArea { clicked => { input.focus(); } }
@@ -255,8 +256,10 @@ export component DialogInput inherits Rectangle {
         }
 
         input := TextInput {
-            x: 12px;
-            width: parent.width - 24px;
+            private property <length> computed-x;
+
+            x: min(12px, max(parent.width - 12px - self.width - self.text-cursor-width, self.computed-x));
+            width: max(parent.width - 24px - self.text-cursor-width, self.preferred-width);
             height: parent.height;
             text <=> root.text;
             single-line: true;
@@ -266,6 +269,13 @@ export component DialogInput inherits Rectangle {
             selection-foreground-color: #18181b;
             vertical-alignment: center;
             accessible-label: root.label;
+            cursor-position-changed(cursor-position) => {
+                if cursor-position.x + self.computed-x < 12px {
+                    self.computed-x = 12px - cursor-position.x;
+                } else if cursor-position.x + self.computed-x > parent.width - 12px - self.text-cursor-width {
+                    self.computed-x = parent.width - 12px - cursor-position.x - self.text-cursor-width;
+                }
+            }
             key-pressed(event) => {
                 if event.text == Key.Menu || (event.text == Key.F10 && event.modifiers.shift) {
                     root.open-menu(12px, root.height);
@@ -351,7 +361,13 @@ export component DialogInput inherits Rectangle {
                         }
                         menu-touch := TouchArea {
                             enabled: parent.available;
-                            changed has-hover => { if self.has-hover { root.menu-index = index; } }
+                            changed has-hover => {
+                                if self.has-hover {
+                                    root.menu-index = index;
+                                } else if root.menu-index == index {
+                                    root.menu-index = -1;
+                                }
+                            }
                             clicked => { root.edit(index); }
                         }
                     }
