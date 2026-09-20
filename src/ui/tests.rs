@@ -47,18 +47,30 @@ fn snapshot_projection_handles_initial_changed_and_closed_updates() {
 #[test]
 fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std::error::Error>> {
     use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
-    use slint::platform::{Platform, PointerEventButton, WindowAdapter, WindowEvent};
+    use slint::platform::{Clipboard, Platform, PointerEventButton, WindowAdapter, WindowEvent};
+    use std::cell::RefCell;
     use std::rc::Rc;
 
-    struct TestPlatform(Rc<MinimalSoftwareWindow>);
+    struct TestPlatform(Rc<MinimalSoftwareWindow>, Rc<RefCell<String>>);
     impl Platform for TestPlatform {
         fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
             Ok(self.0.clone())
         }
+
+        fn set_clipboard_text(&self, text: &str, clipboard: Clipboard) {
+            if clipboard == Clipboard::DefaultClipboard {
+                *self.1.borrow_mut() = text.into();
+            }
+        }
+
+        fn clipboard_text(&self, clipboard: Clipboard) -> Option<String> {
+            (clipboard == Clipboard::DefaultClipboard).then(|| self.1.borrow().clone())
+        }
     }
 
     let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
-    slint::platform::set_platform(Box::new(TestPlatform(window.clone())))?;
+    let clipboard = Rc::new(RefCell::new(String::new()));
+    slint::platform::set_platform(Box::new(TestPlatform(window.clone(), clipboard.clone())))?;
     let ui = MainWindow::new()?;
     ui.show()?;
     let click = |x, y| {
@@ -170,6 +182,75 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
             text: "https://example.com/file.zip".into(),
         });
         assert_eq!(ui.get_url_text(), "https://example.com/file.zip");
+        let shortcut = |text: &str| {
+            let modifier = if cfg!(target_os = "macos") {
+                slint::platform::Key::Meta
+            } else {
+                slint::platform::Key::Control
+            };
+            window.dispatch_event(WindowEvent::KeyPressed {
+                text: modifier.into(),
+            });
+            window.dispatch_event(WindowEvent::KeyPressed { text: text.into() });
+            window.dispatch_event(WindowEvent::KeyReleased { text: text.into() });
+            window.dispatch_event(WindowEvent::KeyReleased {
+                text: modifier.into(),
+            });
+        };
+        shortcut("a");
+        shortcut("x");
+        assert!(ui.get_url_text().is_empty());
+        assert_eq!(*clipboard.borrow(), "https://example.com/file.zip");
+        shortcut("v");
+        assert_eq!(ui.get_url_text(), "https://example.com/file.zip");
+        let context_position = slint::LogicalPosition::new(left + 120.0, top + 74.0);
+        let open_menu = || {
+            window.dispatch_event(WindowEvent::PointerPressed {
+                position: context_position,
+                button: PointerEventButton::Right,
+            });
+            window.dispatch_event(WindowEvent::PointerReleased {
+                position: context_position,
+                button: PointerEventButton::Right,
+            });
+        };
+        open_menu();
+        render();
+        for _ in 0..3 {
+            window.dispatch_event(WindowEvent::KeyPressed {
+                text: slint::platform::Key::DownArrow.into(),
+            });
+        }
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Return.into(),
+        });
+        assert_eq!(
+            ui.get_url_text(),
+            "https://example.com/file.ziphttps://example.com/file.zip",
+            "The right-click menu supports keyboard Paste"
+        );
+        shortcut("a");
+        *clipboard.borrow_mut() = "https://example.com/replacement.zip".into();
+        open_menu();
+        render();
+        click(context_position.x + 20.0, context_position.y + 74.0);
+        assert_eq!(
+            ui.get_url_text(),
+            "https://example.com/replacement.zip",
+            "Right-click preserves selection and pointer Paste replaces it"
+        );
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Menu.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Escape.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed { text: "#".into() });
+        assert_eq!(
+            ui.get_url_text(),
+            "https://example.com/replacement.zip#",
+            "Escape returns keyboard focus to the input"
+        );
         let browsed = Rc::new(std::cell::Cell::new(0));
         let count = browsed.clone();
         ui.on_browse_folder(move || count.set(count.get() + 1));

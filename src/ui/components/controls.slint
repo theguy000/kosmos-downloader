@@ -160,6 +160,7 @@ export component IdmToolButton inherits Rectangle {
 export component PointerButton inherits Rectangle {
     in property <string> text;
     in property <bool> primary: false;
+    in property <bool> filled: false;
     in property <bool> enabled: true;
     callback clicked();
 
@@ -167,8 +168,9 @@ export component PointerButton inherits Rectangle {
     height: 36px;
     background: !root.enabled ? #303034 : (touch.pressed ? #3b4658 :
         (root.primary ? (touch.has-hover ? #a7bfe2 : #8ba9d6) :
-        (touch.has-hover ? #303036 : transparent)));
-    border-width: focus.has-focus ? 1px : 0px;
+        (root.filled ? (touch.has-hover ? #45454d : #36363e) :
+        (touch.has-hover ? #303036 : transparent))));
+    border-width: root.enabled && focus.has-focus ? 1px : 0px;
     border-color: #edf3ff;
     forward-focus: focus;
     accessible-role: button;
@@ -205,6 +207,27 @@ export component DialogInput inherits Rectangle {
     in-out property <string> text;
     in property <string> placeholder-text;
     in property <string> label;
+    private property <length> menu-x;
+    private property <length> menu-y;
+    private property <int> menu-index: -1;
+
+    function open-menu(x: length, y: length) {
+        root.menu-x = x;
+        root.menu-y = y;
+        root.menu-index = -1;
+        input.focus();
+        edit-menu.show();
+    }
+
+    function edit(index: int) {
+        if index < 0 || index > 3 || (root.text.is-empty && index != 2) { return; }
+        edit-menu.close();
+        input.focus();
+        if index == 0 { input.cut(); }
+        if index == 1 { input.copy(); }
+        if index == 2 { input.paste(); }
+        if index == 3 { input.select-all(); }
+    }
 
     height: 36px;
     horizontal-stretch: 1;
@@ -221,18 +244,120 @@ export component DialogInput inherits Rectangle {
         vertical-alignment: center;
         overflow: elide;
     }
-    input := TextInput {
-        x: 12px;
-        width: parent.width - 24px;
-        height: parent.height;
-        text <=> root.text;
-        single-line: true;
-        font-size: 12px;
-        color: #f4f4f5;
-        selection-background-color: #8ba9d6;
-        selection-foreground-color: #18181b;
-        vertical-alignment: center;
-        accessible-label: root.label;
+    // The input handles selection; its parent receives otherwise unhandled right-clicks.
+    TouchArea {
+        mouse-cursor: MouseCursor.text;
+        clicked => { input.focus(); }
+        pointer-event(event) => {
+            if event.button == PointerEventButton.right && event.kind == PointerEventKind.up {
+                root.open-menu(self.mouse-x, self.mouse-y);
+            }
+        }
+
+        input := TextInput {
+            x: 12px;
+            width: parent.width - 24px;
+            height: parent.height;
+            text <=> root.text;
+            single-line: true;
+            font-size: 12px;
+            color: #f4f4f5;
+            selection-background-color: #8ba9d6;
+            selection-foreground-color: #18181b;
+            vertical-alignment: center;
+            accessible-label: root.label;
+            key-pressed(event) => {
+                if event.text == Key.Menu || (event.text == Key.F10 && event.modifiers.shift) {
+                    root.open-menu(12px, root.height);
+                    return accept;
+                }
+                return reject;
+            }
+        }
+    }
+    edit-menu := PopupWindow {
+        x: root.menu-x;
+        y: root.menu-y;
+        width: 196px;
+        height: 120px;
+        close-policy: close-on-click-outside;
+        forward-focus: menu-focus;
+
+        Rectangle {
+            background: #1f1f23;
+            border-width: 1px;
+            border-color: #3b3b43;
+
+            menu-focus := FocusScope {
+                key-pressed(event) => {
+                    if event.text == Key.DownArrow || event.text == Key.UpArrow {
+                        root.menu-index = root.text.is-empty ? 2 :
+                            (event.text == Key.DownArrow ? mod(root.menu-index + 1, 4) :
+                            (root.menu-index <= 0 ? 3 : root.menu-index - 1));
+                        return accept;
+                    }
+                    if event.text == Key.Return || event.text == Key.Space {
+                        root.edit(root.menu-index);
+                        return accept;
+                    }
+                    if event.text == Key.Escape || event.text == Key.Tab {
+                        edit-menu.close();
+                        input.focus();
+                        return event.text == Key.Tab ? reject : accept;
+                    }
+                    if Platform.os == OperatingSystemType.macos ? event.modifiers.meta : event.modifiers.control {
+                        if event.text.to-lowercase() == "x" { root.edit(0); return accept; }
+                        if event.text.to-lowercase() == "c" { root.edit(1); return accept; }
+                        if event.text.to-lowercase() == "v" { root.edit(2); return accept; }
+                        if event.text.to-lowercase() == "a" { root.edit(3); return accept; }
+                    }
+                    return reject;
+                }
+
+                VerticalLayout {
+                    padding: 4px;
+                    spacing: 0px;
+                    for item[index] in [
+                        { title: "Cut", shortcut: "X" },
+                        { title: "Copy", shortcut: "C" },
+                        { title: "Paste", shortcut: "V" },
+                        { title: "Select All", shortcut: "A" },
+                    ]: menu-row := Rectangle {
+                        private property <bool> available: index == 2 || !root.text.is-empty;
+                        height: 28px;
+                        background: !self.available ? transparent :
+                            (menu-touch.pressed ? #3b4658 : (root.menu-index == index ? #303036 : transparent));
+                        accessible-role: button;
+                        accessible-label: item.title;
+                        accessible-enabled: self.available;
+                        accessible-action-default => { root.edit(index); }
+
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            Text {
+                                text: item.title;
+                                font-size: 12px;
+                                color: menu-row.available ? #f4f4f5 : #71717a;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: (Platform.os == OperatingSystemType.macos ? "Cmd+" : "Ctrl+") + item.shortcut;
+                                font-size: 11px;
+                                color: menu-row.available ? #a1a1aa : #71717a;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                            }
+                        }
+                        menu-touch := TouchArea {
+                            enabled: parent.available;
+                            changed has-hover => { if self.has-hover { root.menu-index = index; } }
+                            clicked => { root.edit(index); }
+                        }
+                    }
+                }
+            }
+        }
     }
     Rectangle {
         y: parent.height - 2px;

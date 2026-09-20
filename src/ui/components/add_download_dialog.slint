@@ -46,6 +46,7 @@ export component AddDownloadDialog inherits Rectangle {
                 DialogInput { text <=> root.dest_dir_text; label: "Save to"; }
                 PointerButton {
                     text: "Browse";
+                    filled: true;
                     clicked => { root.browse_folder(); }
                 }
             }

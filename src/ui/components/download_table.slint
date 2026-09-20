@@ -1,5 +1,6 @@
 import { FileTypeIcon } from "icons.slint";
 import { PausedTransferDetails } from "transfer_details.slint";
+import { ScrollView } from "std-widgets.slint";
 
 export struct TableItem {
     id: int,
@@ -42,25 +43,27 @@ component DownloadRowColumns inherits HorizontalLayout {
     }
 
     HorizontalLayout {
-        width: 80px;
+        width: 125px;
         padding-left: 6px;
         alignment: start;
         Text {
             text: root.size_text;
             font-size: 11px;
             color: root.is_active ? #d4d4d8 : #71717a;
+            overflow: elide;
             vertical-alignment: center;
         }
     }
 
     HorizontalLayout {
-        width: 95px;
+        width: 125px;
         padding-left: 6px;
         alignment: start;
         Text {
             text: root.status_text;
             font-size: 11px;
             color: root.status_color;
+            overflow: elide;
             vertical-alignment: center;
         }
     }
@@ -102,7 +105,7 @@ component DownloadRowColumns inherits HorizontalLayout {
     }
 }
 
-export component DownloadTable inherits Rectangle {
+export component DownloadTable inherits ScrollView {
     in property <bool> active_row_visible: false;
     in-out property <int> selected_row: 0;
     in property <bool> is_completed: false;
@@ -131,9 +134,20 @@ export component DownloadTable inherits Rectangle {
             || (category == 7 && completed);
     }
 
-    background: #141416;
+    content-width: max(self.visible-width, 820px);
+    content-height: self.visible-height;
+    horizontal-scrollbar-policy: ScrollBarPolicy.as-needed;
+    vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+
+    Rectangle {
+        width: root.content-width;
+        height: root.content-height;
+        background: #141416;
+    }
 
     VerticalLayout {
+        width: root.content-width;
+        height: root.content-height;
         padding: 0px;
         spacing: 0px;
 
@@ -152,12 +166,12 @@ export component DownloadTable inherits Rectangle {
                     Rectangle { width: 1px; background: #27272a; }
                 }
                 HorizontalLayout {
-                    width: 80px; padding-left: 6px;
+                    width: 125px; padding-left: 6px;
                     Text { text: "Size"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
                     Rectangle { width: 1px; background: #27272a; }
                 }
                 HorizontalLayout {
-                    width: 95px; padding-left: 6px;
+                    width: 125px; padding-left: 6px;
                     Text { text: "Status"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
                     Rectangle { width: 1px; background: #27272a; }
                 }
