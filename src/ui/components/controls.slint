@@ -105,6 +105,7 @@ export component IdmToolButton inherits Rectangle {
     in property <string> text: "";
     in property <bool> enabled: true;
     callback clicked();
+    public function take-focus() { focus.focus(); }
 
     width: 62px;
     height: 48px;
@@ -161,15 +162,20 @@ export component PointerButton inherits Rectangle {
     in property <string> text;
     in property <bool> primary: false;
     in property <bool> filled: false;
+    in property <bool> danger: false;
     in property <bool> enabled: true;
+    out property <bool> has_keyboard_focus: focus.has-focus;
     callback clicked();
+    public function take-focus() { focus.focus(); }
 
     width: root.text == "Download" ? 88px : 72px;
     height: 36px;
-    background: !root.enabled ? #303034 : (touch.pressed ? #3b4658 :
+    background: !root.enabled ? #303034 : (root.danger ?
+        (touch.pressed ? #991b1b : (touch.has-hover ? #dc2626 : #b91c1c)) :
+        (touch.pressed ? #3b4658 :
         (root.primary ? (touch.has-hover ? #a7bfe2 : #8ba9d6) :
         (root.filled ? (touch.has-hover ? #45454d : #36363e) :
-        (touch.has-hover ? #303036 : transparent))));
+        (touch.has-hover ? #303036 : transparent)))));
     border-width: root.enabled && focus.has-focus ? 1px : 0px;
     border-color: #edf3ff;
     forward-focus: focus;
@@ -182,7 +188,7 @@ export component PointerButton inherits Rectangle {
         text: root.text;
         font-size: 12px;
         font-weight: root.primary ? 600 : 400;
-        color: !root.enabled ? #92929b : (root.primary && !touch.pressed ? #18181b : #f4f4f5);
+        color: !root.enabled ? #92929b : (root.primary && !root.danger && !touch.pressed ? #18181b : #f4f4f5);
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -200,6 +206,70 @@ export component PointerButton inherits Rectangle {
         enabled: root.enabled;
         mouse-cursor: root.enabled ? pointer : default;
         clicked => { focus.focus(); root.clicked(); }
+    }
+}
+
+export component DialogCheckBox inherits Rectangle {
+    in-out property <bool> checked: false;
+    in property <string> text;
+    out property <bool> has_keyboard_focus: focus.has-focus;
+    public function take-focus() { focus.focus(); }
+
+    height: 36px;
+    background: touch.pressed ? #2b2b30 : (touch.has-hover ? #27272a : transparent);
+    forward-focus: focus;
+    accessible-role: checkbox;
+    accessible-label: root.text;
+    accessible-enabled: true;
+    accessible-checkable: true;
+    accessible-checked <=> root.checked;
+    accessible-action-default => { root.checked = !root.checked; }
+
+    Rectangle {
+        x: 2px;
+        y: (parent.height - self.height) / 2;
+        width: 18px;
+        height: 18px;
+        background: root.checked ? #8ba9d6 : #2b2b30;
+        border-width: focus.has-focus ? 2px : 1px;
+        border-color: focus.has-focus ? #edf3ff : #71717a;
+
+        if root.checked: Path {
+            x: 2px;
+            y: 2px;
+            width: 14px;
+            height: 14px;
+            commands: "M 2 7 L 6 11 L 12 3";
+            stroke: #18181b;
+            stroke-width: 2px;
+        }
+    }
+
+    Text {
+        x: 30px;
+        width: parent.width - self.x;
+        height: parent.height;
+        text: root.text;
+        font-size: 12px;
+        color: #d4d4d8;
+        vertical-alignment: center;
+    }
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                root.checked = !root.checked;
+                return accept;
+            }
+            return reject;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            focus.focus();
+            root.checked = !root.checked;
+        }
     }
 }
 

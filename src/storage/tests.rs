@@ -147,3 +147,15 @@ fn test_storage_read_at_rejects_offset_overflow() {
         StorageError::Io(error) if error.kind() == std::io::ErrorKind::InvalidInput
     ));
 }
+
+#[test]
+fn create_new_reports_ownership_after_initialization_failure() {
+    let temp_file = TempFile::new("exclusive-initialization-failure");
+    let error = match Storage::create_new(temp_file.path(), Some(u64::MAX)) {
+        Ok(_) => panic!("u64::MAX preallocation must fail"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, StorageError::CreatedFileInitialization(_)));
+    assert!(temp_file.path().exists());
+}

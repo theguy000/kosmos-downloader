@@ -1,5 +1,5 @@
 use super::MainWindow;
-use super::app::send_action;
+use super::app::{DeleteTarget, send_action};
 use super::platform::default_download_directory;
 use super::projection::{should_project_snapshot, update_window_state};
 use slint::ComponentHandle;
@@ -41,6 +41,31 @@ fn snapshot_projection_handles_initial_changed_and_closed_updates() {
     {
         let snapshot = rx.borrow_and_update();
         assert!(!should_project_snapshot(&snapshot, &mut initial));
+    }
+}
+
+#[test]
+fn delete_target_preserves_exact_confirmation_token() {
+    use crate::engine::{DownloadAction, DownloadStatus};
+
+    let completed = DeleteTarget {
+        session_id: 41,
+        status: DownloadStatus::Completed,
+        completed_only: true,
+    };
+    match completed.action(true) {
+        DownloadAction::Remove {
+            expected_session_id,
+            expected_status,
+            delete_file,
+            completed_only,
+        } => {
+            assert_eq!(expected_session_id, 41);
+            assert_eq!(expected_status, DownloadStatus::Completed);
+            assert!(delete_file);
+            assert!(completed_only);
+        }
+        _ => panic!("delete target must produce Remove"),
     }
 }
 
@@ -292,10 +317,45 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         let resumed = Rc::new(std::cell::Cell::new(0));
         let count = resumed.clone();
         ui.on_resume_download(move || count.set(count.get() + 1));
-        ui.on_cancel_download(|| panic!("Stop All must not cancel the session"));
+        let selected_delete_requests = Rc::new(std::cell::Cell::new(0));
+        let count = selected_delete_requests.clone();
+        let window_weak = ui.as_weak();
+        ui.on_request_delete_selected(move || {
+            count.set(count.get() + 1);
+            if let Some(window) = window_weak.upgrade() {
+                window.set_delete_filename(window.get_active_filename());
+                window.set_delete_completed_only(false);
+                window.set_delete_target_completed(window.get_is_completed());
+                window.set_delete_file(false);
+                window.set_show_delete_dialog(true);
+            }
+        });
+        let completed_delete_requests = Rc::new(std::cell::Cell::new(0));
+        let count = completed_delete_requests.clone();
+        let window_weak = ui.as_weak();
+        ui.on_request_delete_completed(move || {
+            count.set(count.get() + 1);
+            if let Some(window) = window_weak.upgrade() {
+                window.set_delete_filename(window.get_active_filename());
+                window.set_delete_completed_only(true);
+                window.set_delete_target_completed(true);
+                window.set_delete_file(false);
+                window.set_show_delete_dialog(true);
+            }
+        });
+        let confirmed_deletes = Rc::new(RefCell::new(Vec::new()));
+        let payloads = confirmed_deletes.clone();
+        let window_weak = ui.as_weak();
+        ui.on_confirm_delete(move |delete_file| {
+            payloads.borrow_mut().push(delete_file);
+            if let Some(window) = window_weak.upgrade() {
+                window.invoke_close_delete_dialog();
+            }
+        });
 
         use crate::engine::{DownloadAction, DownloadSnapshot, DownloadStatus};
         let mut snapshot = DownloadSnapshot {
+            session_id: 7,
             filename: "archive.zip".into(),
             status: DownloadStatus::Downloading,
             resumable: true,
@@ -311,6 +371,7 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
             !ui.get_can_stop(),
             "Stop only targets the selected download"
         );
+        assert!(!ui.get_can_delete_selected());
         assert!(ui.get_can_stop_all());
         click(166.0, 50.0);
         assert_eq!(stopped.get(), 0);
@@ -330,6 +391,97 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         assert!(ui.get_can_stop());
         click(166.0, 50.0);
         assert_eq!(stopped.get(), 3);
+
+        assert!(ui.get_can_delete_selected());
+        assert!(!ui.get_can_delete_completed());
+        click(298.0, 50.0);
+        assert_eq!(selected_delete_requests.get(), 1);
+        assert!(ui.get_show_delete_dialog());
+        assert_eq!(ui.get_delete_filename(), "archive.zip");
+        assert!(!ui.get_delete_completed_only());
+        assert!(!ui.get_delete_file(), "file deletion defaults to unchecked");
+        render();
+
+        click(230.0, 50.0);
+        assert_eq!(stopped.get(), 3, "modal overlay blocks the toolbar");
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Return.into(),
+        });
+        assert!(!ui.get_show_delete_dialog(), "Cancel has initial focus");
+        assert!(confirmed_deletes.borrow().is_empty());
+
+        window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+        assert!(ui.get_show_delete_dialog());
+        render();
+        let delete_top = height as f32 / 2.0 - 90.0;
+        click(width as f32 / 2.0 - 150.0, delete_top + 146.0);
+        assert!(
+            ui.get_delete_file(),
+            "pointer toggles and focuses the checkbox"
+        );
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Tab.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Return.into(),
+        });
+        assert!(!ui.get_show_delete_dialog());
+        assert!(
+            confirmed_deletes.borrow().is_empty(),
+            "Tab follows pointer focus to Cancel instead of Delete"
+        );
+        assert!(!ui.get_delete_file(), "Cancel resets the checkbox");
+
+        window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+        assert!(ui.get_show_delete_dialog(), "focus returns to Delete");
+        render();
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Tab.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Return.into(),
+        });
+        assert_eq!(&*confirmed_deletes.borrow(), &[false]);
+
+        window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+        render();
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Shift.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Tab.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyReleased {
+            text: slint::platform::Key::Shift.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+        assert!(ui.get_delete_file(), "Space toggles the focused checkbox");
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Tab.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Tab.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Return.into(),
+        });
+        assert_eq!(&*confirmed_deletes.borrow(), &[false, true]);
+
+        window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+        assert!(!ui.get_delete_file(), "checkbox resets for every request");
+        render();
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Escape.into(),
+        });
+        assert!(!ui.get_show_delete_dialog());
+        window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+        assert!(
+            ui.get_show_delete_dialog(),
+            "Escape restores focus to the requesting toolbar action"
+        );
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Escape.into(),
+        });
 
         snapshot.status = DownloadStatus::Paused;
         update_window_state(&ui, &snapshot);
@@ -397,6 +549,23 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         }
         snapshot.status = DownloadStatus::Completed;
         update_window_state(&ui, &snapshot);
+        ui.set_selected_category(6);
+        ui.set_selected_row(1);
+        assert!(!ui.get_can_delete_selected());
+        assert!(
+            ui.get_can_delete_completed(),
+            "Delete Completed ignores row and category selection"
+        );
+        render();
+        click(380.0, 50.0);
+        assert_eq!(completed_delete_requests.get(), 1);
+        assert!(ui.get_show_delete_dialog());
+        assert!(ui.get_delete_completed_only());
+        assert!(!ui.get_delete_file());
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Escape.into(),
+        });
+
         for category in 0..10 {
             ui.set_selected_category(category);
             assert_eq!(ui.get_active_row_visible(), matches!(category, 0 | 1 | 7));

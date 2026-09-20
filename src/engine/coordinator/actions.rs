@@ -30,6 +30,7 @@ impl Session {
                 self.status = DownloadStatus::Connecting;
                 self.active_chunks.clear();
                 self.active_storage = None;
+                self.owns_target = false;
                 self.file_info = None;
                 self.current_speed = 0;
                 self.bytes_since_last_tick = 0;
@@ -157,8 +158,67 @@ impl Session {
                 self.current_speed = 0;
                 self.active_chunks.clear();
                 self.active_storage = None;
+                self.owns_target = false;
                 self.file_info = None;
                 self.publish(None, 0, 0, None, false);
+            }
+
+            DownloadAction::Remove {
+                expected_session_id,
+                expected_status,
+                delete_file,
+                completed_only,
+            } => {
+                if self.status == DownloadStatus::Idle
+                    || self.session_id != expected_session_id
+                    || self.status != expected_status
+                    || (completed_only && self.status != DownloadStatus::Completed)
+                {
+                    return;
+                }
+
+                let _ = self.cancel_tx.send(true);
+                self.wait_for_active_tasks().await;
+                self.session_id += 1;
+
+                let total_bytes = self.file_info.as_ref().and_then(|info| info.content_length);
+                let downloaded_bytes = calculate_downloaded(&self.active_chunks);
+                let storage = self.active_storage.take();
+                self.active_chunks.clear();
+                self.file_info = None;
+                self.current_speed = 0;
+                self.bytes_since_last_tick = 0;
+                self.restart_required = false;
+                drop(storage);
+
+                let removal = if delete_file && self.owns_target {
+                    let path = self.current_path.clone();
+                    Some(tokio::task::spawn_blocking(move || std::fs::remove_file(path)).await)
+                } else {
+                    None
+                };
+                let error = match removal {
+                    Some(Ok(Err(error))) if error.kind() != std::io::ErrorKind::NotFound => {
+                        Some(format!(
+                            "Failed to delete download file {}: {error}",
+                            self.current_path.display()
+                        ))
+                    }
+                    Some(Err(error)) => Some(format!(
+                        "Failed to run file deletion for {}: {error}",
+                        self.current_path.display()
+                    )),
+                    _ => None,
+                };
+
+                if let Some(error) = error {
+                    self.status = DownloadStatus::Failed(error);
+                    self.publish(total_bytes, downloaded_bytes, 0, None, false);
+                } else {
+                    self.owns_target = false;
+                    self.status = DownloadStatus::Idle;
+                    self.publish(None, 0, 0, None, false);
+                }
             }
         }
     }

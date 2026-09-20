@@ -82,6 +82,7 @@ impl Session {
         resumable: bool,
     ) {
         let snapshot = DownloadSnapshot {
+            session_id: self.session_id,
             url: self.current_url.clone(),
             filename: self.current_filename.clone(),
             save_path: self.current_path.clone(),

@@ -1,0 +1,112 @@
+import { DialogCheckBox, PointerButton } from "controls.slint";
+
+export component DeleteConfirmationDialog inherits Rectangle {
+    in property <string> filename: "";
+    in property <bool> completed_only: false;
+    in property <bool> target_completed: false;
+    in-out property <bool> delete_file: false;
+    private property <int> focus_index: delete_file_control.has-keyboard-focus ? 0
+        : (cancel_button.has-keyboard-focus ? 1
+        : (delete_button.has-keyboard-focus ? 2 : 1));
+    callback dismiss();
+    callback confirm(bool);
+
+    function focus-item(index: int) {
+        if index == 0 { delete_file_control.take-focus(); }
+        else if index == 1 { cancel_button.take-focus(); }
+        else { delete_button.take-focus(); }
+    }
+
+    background: #000000bb;
+    forward-focus: dialog_focus;
+    init => { root.focus-item(1); }
+
+    TouchArea {}
+
+    dialog_focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.dismiss();
+                return accept;
+            }
+            if event.text == Key.Tab {
+                root.focus-item(event.modifiers.shift
+                    ? (root.focus_index == 0 ? 2 : root.focus_index - 1)
+                    : mod(root.focus_index + 1, 3));
+                return accept;
+            }
+            return reject;
+        }
+
+        Rectangle {
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            width: 440px;
+            height: 180px;
+            background: #1f1f23;
+            accessible-role: groupbox;
+            accessible-label: (root.completed_only ? "Delete completed download: " : "Delete download: ")
+                + root.filename;
+
+            VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+
+                Text {
+                    height: 22px;
+                    text: root.completed_only ? "Delete completed download?" : "Delete download?";
+                    font-size: 15px;
+                    font-weight: 600;
+                    color: #f4f4f5;
+                }
+
+                if root.filename != "": Text {
+                    height: 18px;
+                    text: root.filename;
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: #f4f4f5;
+                    overflow: elide;
+                }
+
+                Text {
+                    text: root.delete_file
+                        ? (root.target_completed
+                            ? "The download is removed from this list. The downloaded file is permanently deleted from disk."
+                            : "The download is removed from this list. Any partial file is permanently deleted from disk.")
+                        : (root.target_completed
+                            ? "The download is removed from this list. The downloaded file stays on disk."
+                            : "The download is removed from this list. Any partial file stays on disk.");
+                    font-size: 12px;
+                    color: #d4d4d8;
+                    wrap: word-wrap;
+                }
+
+                Rectangle {}
+
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    delete_file_control := DialogCheckBox {
+                        width: 170px;
+                        checked <=> root.delete_file;
+                        text: "Also delete the file";
+                    }
+
+                    Rectangle {}
+
+                    cancel_button := PointerButton {
+                        text: "Cancel";
+                        clicked => { root.dismiss(); }
+                    }
+
+                    delete_button := PointerButton {
+                        text: "Delete";
+                        danger: true;
+                        clicked => { root.confirm(root.delete_file); }
+                    }
+                }
+            }
+        }
+    }
+}

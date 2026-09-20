@@ -155,17 +155,21 @@ impl Session {
                 .await
                 {
                     Ok(Ok(storage)) => Ok(storage),
-                    Ok(Err(err)) => Err(match &err {
-                        StorageError::Io(error)
-                            if error.kind() == std::io::ErrorKind::AlreadyExists =>
-                        {
-                            format!(
-                                "Refusing to overwrite existing file {}. Choose a different path or remove it first: {err}",
-                                self.current_path.display()
-                            )
-                        }
-                        _ => err.to_string(),
-                    }),
+                    Ok(Err(err)) => {
+                        self.owns_target =
+                            matches!(&err, StorageError::CreatedFileInitialization(_));
+                        Err(match &err {
+                            StorageError::Io(error)
+                                if error.kind() == std::io::ErrorKind::AlreadyExists =>
+                            {
+                                format!(
+                                    "Refusing to overwrite existing file {}. Choose a different path or remove it first: {err}",
+                                    self.current_path.display()
+                                )
+                            }
+                            _ => err.to_string(),
+                        })
+                    }
                     Err(err) => Err(format!(
                         "Could not create download file {}: {err}",
                         self.current_path.display()
@@ -174,6 +178,7 @@ impl Session {
 
                 match storage {
                     Ok(storage) => {
+                        self.owns_target = true;
                         let total_size = info.content_length;
                         let resumable = uses_range_workers(&info);
                         spawn_download_workers(

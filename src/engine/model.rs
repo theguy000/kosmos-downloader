@@ -13,6 +13,7 @@ pub enum DownloadStatus {
 
 #[derive(Debug, Clone, Default)]
 pub struct DownloadSnapshot {
+    pub session_id: u64,
     pub url: String,
     pub filename: String,
     pub save_path: PathBuf,
@@ -34,4 +35,10 @@ pub enum DownloadAction {
     Pause,
     Resume,
     Cancel,
+    Remove {
+        expected_session_id: u64,
+        expected_status: DownloadStatus,
+        delete_file: bool,
+        completed_only: bool,
+    },
 }

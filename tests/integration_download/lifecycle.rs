@@ -5,7 +5,7 @@ use crate::support::http::{
 use crate::support::mock_server::{
     start_mock_server, start_mock_server_with_head_delay, start_non_range_mock_server,
 };
-use kosmos_downloader::engine::{DownloadAction, DownloadEngine, DownloadStatus};
+use kosmos_downloader::engine::{DownloadAction, DownloadEngine, DownloadSnapshot, DownloadStatus};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -55,6 +55,67 @@ async fn assert_existing_target_is_preserved(save_path: PathBuf, target_path: Pa
     }
     assert_eq!(std::fs::read(&target_path).unwrap(), original);
     assert_eq!(terminal.save_path, target_path);
+
+    action_tx
+        .send(removal_action(&terminal, true, false))
+        .await
+        .unwrap();
+    wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(1),
+        "Removing a failed preexisting target did not clear its row",
+        |snapshot| snapshot.status == DownloadStatus::Idle,
+    )
+    .await;
+    assert_eq!(std::fs::read(&target_path).unwrap(), original);
+}
+
+static NEXT_REMOVAL_TEST: AtomicUsize = AtomicUsize::new(0);
+
+fn removal_path(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "kosmos_remove_{name}_{}_{}.bin",
+        std::process::id(),
+        NEXT_REMOVAL_TEST.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+fn removal_action(
+    snapshot: &DownloadSnapshot,
+    delete_file: bool,
+    completed_only: bool,
+) -> DownloadAction {
+    DownloadAction::Remove {
+        expected_session_id: snapshot.session_id,
+        expected_status: snapshot.status.clone(),
+        delete_file,
+        completed_only,
+    }
+}
+
+async fn start_removal_download(
+    name: &str,
+    payload: Vec<u8>,
+) -> (
+    tokio::sync::mpsc::Sender<DownloadAction>,
+    tokio::sync::watch::Receiver<DownloadSnapshot>,
+    PathBuf,
+) {
+    let server_addr = start_mock_server(payload).await;
+    let save_path = removal_path(name);
+    let _ = std::fs::remove_file(&save_path);
+    let engine = DownloadEngine::new();
+    let action_tx = engine.action_tx();
+    let snapshot_rx = engine.snapshot_rx();
+    action_tx
+        .send(DownloadAction::Start {
+            url: format!("http://{server_addr}/payload.bin"),
+            save_path: save_path.clone(),
+            num_chunks: 2,
+        })
+        .await
+        .unwrap();
+    (action_tx, snapshot_rx, save_path)
 }
 
 #[tokio::test]
@@ -537,4 +598,299 @@ async fn test_cancel_during_connecting() {
     )
     .await;
     let _ = std::fs::remove_file(&save_path);
+}
+
+#[tokio::test]
+async fn test_remove_completed_respects_file_choice() {
+    for delete_file in [false, true] {
+        let (action_tx, mut snapshot_rx, save_path) = start_removal_download(
+            if delete_file {
+                "completed_delete"
+            } else {
+                "completed_keep"
+            },
+            generate_test_payload(),
+        )
+        .await;
+        let completed = wait_for_snapshot(
+            &mut snapshot_rx,
+            Duration::from_secs(5),
+            "Download did not complete before removal",
+            |snapshot| snapshot.status == DownloadStatus::Completed,
+        )
+        .await;
+        assert!(save_path.exists());
+
+        action_tx
+            .send(removal_action(&completed, delete_file, true))
+            .await
+            .unwrap();
+        let idle = wait_for_snapshot(
+            &mut snapshot_rx,
+            Duration::from_secs(2),
+            "Completed removal did not clear its row",
+            |snapshot| snapshot.status == DownloadStatus::Idle,
+        )
+        .await;
+
+        assert_ne!(idle.session_id, completed.session_id);
+        assert_eq!(save_path.exists(), !delete_file);
+        let _ = std::fs::remove_file(save_path);
+    }
+}
+
+#[tokio::test]
+async fn test_remove_active_stops_writers_before_file_choice() {
+    for delete_file in [false, true] {
+        let (action_tx, mut snapshot_rx, save_path) = start_removal_download(
+            if delete_file {
+                "active_delete"
+            } else {
+                "active_keep"
+            },
+            vec![0x5a; 512 * 1024],
+        )
+        .await;
+        let active = wait_for_snapshot(
+            &mut snapshot_rx,
+            Duration::from_secs(3),
+            "Download did not become active before removal",
+            |snapshot| snapshot.status == DownloadStatus::Downloading,
+        )
+        .await;
+        assert!(save_path.exists());
+
+        action_tx
+            .send(removal_action(&active, delete_file, false))
+            .await
+            .unwrap();
+        wait_for_snapshot(
+            &mut snapshot_rx,
+            Duration::from_secs(3),
+            "Active removal did not clear its row",
+            |snapshot| snapshot.status == DownloadStatus::Idle,
+        )
+        .await;
+
+        assert_eq!(save_path.exists(), !delete_file);
+        let _ = std::fs::remove_file(save_path);
+    }
+}
+
+#[tokio::test]
+async fn test_remove_guards_completed_only_and_stale_status() {
+    let (action_tx, mut snapshot_rx, save_path) =
+        start_removal_download("guard_status", generate_test_payload()).await;
+    let active = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(3),
+        "Download did not become active for guard test",
+        |snapshot| snapshot.status == DownloadStatus::Downloading,
+    )
+    .await;
+
+    action_tx
+        .send(removal_action(&active, true, true))
+        .await
+        .unwrap();
+    let completed = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(5),
+        "Completed-only guard canceled an active download",
+        |snapshot| snapshot.status == DownloadStatus::Completed,
+    )
+    .await;
+
+    action_tx
+        .send(removal_action(&active, true, false))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let after_stale = snapshot_rx.borrow_and_update().clone();
+    assert_eq!(after_stale.status, DownloadStatus::Completed);
+    assert_eq!(after_stale.session_id, completed.session_id);
+    assert!(save_path.exists());
+
+    action_tx
+        .send(removal_action(&completed, false, true))
+        .await
+        .unwrap();
+    wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(2),
+        "Guard test cleanup did not clear row",
+        |snapshot| snapshot.status == DownloadStatus::Idle,
+    )
+    .await;
+    let _ = std::fs::remove_file(save_path);
+}
+
+#[tokio::test]
+async fn test_remove_rejects_stale_session_id_after_new_start() {
+    let (action_tx, mut snapshot_rx, first_path) =
+        start_removal_download("stale_first", vec![0x11; 512 * 1024]).await;
+    let stale = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(3),
+        "First download did not become active",
+        |snapshot| snapshot.status == DownloadStatus::Downloading,
+    )
+    .await;
+
+    let second_server = start_mock_server(generate_test_payload()).await;
+    let second_path = removal_path("stale_second");
+    let _ = std::fs::remove_file(&second_path);
+    action_tx
+        .send(DownloadAction::Start {
+            url: format!("http://{second_server}/payload.bin"),
+            save_path: second_path.clone(),
+            num_chunks: 2,
+        })
+        .await
+        .unwrap();
+    let replacement = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(3),
+        "Replacement download did not become active",
+        |snapshot| {
+            snapshot.save_path == second_path && snapshot.status == DownloadStatus::Downloading
+        },
+    )
+    .await;
+
+    action_tx
+        .send(removal_action(&stale, true, false))
+        .await
+        .unwrap();
+    let completed = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(5),
+        "Stale removal interrupted the replacement download",
+        |snapshot| snapshot.status == DownloadStatus::Completed,
+    )
+    .await;
+    assert_eq!(completed.session_id, replacement.session_id);
+    assert!(second_path.exists());
+
+    action_tx
+        .send(removal_action(&completed, false, false))
+        .await
+        .unwrap();
+    wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(2),
+        "Stale-session cleanup did not clear row",
+        |snapshot| snapshot.status == DownloadStatus::Idle,
+    )
+    .await;
+    let _ = std::fs::remove_file(first_path);
+    let _ = std::fs::remove_file(second_path);
+}
+
+#[tokio::test]
+async fn test_remove_failure_retains_row_and_retries_not_found() {
+    let (action_tx, mut snapshot_rx, save_path) =
+        start_removal_download("retry", generate_test_payload()).await;
+    let completed = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(5),
+        "Download did not complete before deletion failure test",
+        |snapshot| snapshot.status == DownloadStatus::Completed,
+    )
+    .await;
+    let moved_path = save_path.with_extension("moved");
+    let _ = std::fs::remove_file(&moved_path);
+    std::fs::rename(&save_path, &moved_path).unwrap();
+    std::fs::create_dir(&save_path).unwrap();
+
+    action_tx
+        .send(removal_action(&completed, true, false))
+        .await
+        .unwrap();
+    let failed = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(2),
+        "File deletion failure did not retain a failed row",
+        |snapshot| matches!(snapshot.status, DownloadStatus::Failed(_)),
+    )
+    .await;
+    match &failed.status {
+        DownloadStatus::Failed(message) => {
+            assert!(message.contains("Failed to delete download file"));
+            assert!(message.contains(&save_path.display().to_string()));
+        }
+        status => panic!("Expected failed removal, got {status:?}"),
+    }
+    assert!(!failed.resumable);
+    assert_ne!(failed.session_id, completed.session_id);
+    assert!(save_path.is_dir());
+
+    std::fs::remove_dir(&save_path).unwrap();
+    action_tx
+        .send(removal_action(&failed, true, false))
+        .await
+        .unwrap();
+    wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(2),
+        "NotFound retry did not clear failed removal row",
+        |snapshot| snapshot.status == DownloadStatus::Idle,
+    )
+    .await;
+    assert!(!save_path.exists());
+    assert!(moved_path.exists());
+    let _ = std::fs::remove_file(moved_path);
+}
+
+#[tokio::test]
+async fn test_remove_deletes_target_created_before_preallocation_failure() {
+    let addr = start_local_server(|mut socket, request| async move {
+        if is_head_request(&request) {
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\
+                 Accept-Ranges: bytes\r\nConnection: close\r\n\r\n",
+                u64::MAX
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+        }
+    })
+    .await;
+    let save_path = removal_path("preallocation_failure");
+    let _ = std::fs::remove_file(&save_path);
+    let engine = DownloadEngine::new();
+    let action_tx = engine.action_tx();
+    let mut snapshot_rx = engine.snapshot_rx();
+    action_tx
+        .send(DownloadAction::Start {
+            url: format!("http://{addr}/payload.bin"),
+            save_path: save_path.clone(),
+            num_chunks: 2,
+        })
+        .await
+        .unwrap();
+
+    let failed = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(3),
+        "Preallocation failure was not reported",
+        |snapshot| matches!(snapshot.status, DownloadStatus::Failed(_)),
+    )
+    .await;
+    assert!(
+        matches!(&failed.status, DownloadStatus::Failed(message) if message.contains("Created file could not be initialized"))
+    );
+    assert!(save_path.exists());
+
+    action_tx
+        .send(removal_action(&failed, true, false))
+        .await
+        .unwrap();
+    wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(2),
+        "Owned failed-preallocation target was not removed",
+        |snapshot| snapshot.status == DownloadStatus::Idle,
+    )
+    .await;
+    assert!(!save_path.exists());
 }

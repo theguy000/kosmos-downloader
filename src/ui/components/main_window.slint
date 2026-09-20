@@ -2,6 +2,7 @@
 import "../fonts/InterVariable.ttf";
 
 import { AddDownloadDialog } from "add_download_dialog.slint";
+import { DeleteConfirmationDialog } from "delete_confirmation_dialog.slint";
 import { DownloadTable, TableItem } from "download_table.slint";
 import { ErrorDialog } from "error_dialog.slint";
 import { CategorySidebar } from "sidebar.slint";
@@ -22,6 +23,11 @@ export component MainWindow inherits Window {
     in-out property <string> dest_dir_text: "";
     in-out property <float> streams_count: 8;
     in-out property <bool> show_add_dialog: false;
+    in-out property <bool> show_delete_dialog: false;
+    in-out property <string> delete_filename: "";
+    in-out property <bool> delete_completed_only: false;
+    in-out property <bool> delete_target_completed: false;
+    in-out property <bool> delete_file: false;
     in-out property <int> selected_category: 0;
     in-out property <int> selected_row: 0;
     in-out property <bool> all_downloads_expanded: true;
@@ -56,6 +62,8 @@ export component MainWindow inherits Window {
     out property <bool> can_resume: root.active_row_visible && root.selected_row == 0 && root.is_paused;
     out property <bool> can_stop: root.active_row_visible && root.selected_row == 0 && root.is_downloading;
     out property <bool> can_stop_all: root.has_active_download && root.is_downloading;
+    out property <bool> can_delete_selected: root.active_row_visible && root.selected_row == 0;
+    out property <bool> can_delete_completed: root.has_active_download && root.is_completed;
     out property <int> total_items: root.sample_downloads.length + (root.has_active_download ? 1 : 0);
 
     in-out property <[TableItem]> sample_downloads: [];
@@ -63,15 +71,26 @@ export component MainWindow inherits Window {
     callback start_download();
     callback pause_download();
     callback resume_download();
-    callback cancel_download();
+    callback request_delete_selected();
+    callback request_delete_completed();
+    callback confirm_delete(bool);
+    callback dismiss_delete();
     callback browse_folder();
     callback open_file();
+
+    public function close-delete-dialog() {
+        root.show_delete_dialog = false;
+        root.delete_file = false;
+        if root.delete_completed_only { toolbar.focus-delete-completed(); }
+        else { toolbar.focus-delete-selected(); }
+        root.dismiss-delete();
+    }
 
     VerticalLayout {
         padding: 0px;
         spacing: 0px;
 
-        ApplicationToolbar {
+        toolbar := ApplicationToolbar {
             has-active-download: root.has_active_download;
             is-completed: root.is_completed;
             is-paused: root.is_paused;
@@ -79,11 +98,13 @@ export component MainWindow inherits Window {
             can-resume: root.can_resume;
             can-stop: root.can_stop;
             can-stop-all: root.can_stop_all;
-            can-cancel: root.active_row_visible && root.selected_row == 0;
+            can-delete-selected: root.can_delete_selected;
+            can-delete-completed: root.can_delete_completed;
             show-add-dialog => { root.show_add_dialog = true; }
             pause-download => { root.pause_download(); }
             resume-download => { root.resume_download(); }
-            cancel-download => { root.cancel_download(); }
+            request-delete-selected => { root.request-delete-selected(); }
+            request-delete-completed => { root.request-delete-completed(); }
             open-file => { root.open_file(); }
         }
 
@@ -137,6 +158,15 @@ export component MainWindow inherits Window {
         browse-folder => { root.browse_folder(); }
         start-download => { root.start_download(); }
         dismiss => { root.show_add_dialog = false; }
+    }
+
+    if root.show-delete-dialog: DeleteConfirmationDialog {
+        filename: root.delete-filename;
+        completed-only: root.delete-completed-only;
+        target-completed: root.delete-target-completed;
+        delete-file <=> root.delete-file;
+        dismiss => { root.close-delete-dialog(); }
+        confirm(delete-file) => { root.confirm-delete(delete-file); }
     }
 
     if root.action_error_message != "" || root.active_error_message != "": ErrorDialog {

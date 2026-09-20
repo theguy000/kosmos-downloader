@@ -6,6 +6,8 @@ use thiserror::Error;
 pub enum StorageError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Created file could not be initialized: {0}")]
+    CreatedFileInitialization(#[source] std::io::Error),
     #[error("Zero bytes written during offset write")]
     ZeroWrite,
 }
@@ -57,7 +59,12 @@ impl Storage {
             if let Some(size) = total_size
                 && size > 0
             {
-                file.set_len(size)?;
+                if exclusive {
+                    file.set_len(size)
+                        .map_err(StorageError::CreatedFileInitialization)?;
+                } else {
+                    file.set_len(size)?;
+                }
             }
         } else if let Some(size) = total_size {
             let meta = file.metadata()?;

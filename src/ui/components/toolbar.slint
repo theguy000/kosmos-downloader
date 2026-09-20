@@ -17,12 +17,16 @@ export component ApplicationToolbar inherits Rectangle {
     in property <bool> can_resume: false;
     in property <bool> can_stop: false;
     in property <bool> can_stop_all: false;
-    in property <bool> can_cancel: false;
+    in property <bool> can_delete_selected: false;
+    in property <bool> can_delete_completed: false;
     callback show_add_dialog();
     callback pause_download();
     callback resume_download();
-    callback cancel_download();
+    callback request_delete_selected();
+    callback request_delete_completed();
     callback open_file();
+    public function focus-delete-selected() { delete_selected.take-focus(); }
+    public function focus-delete-completed() { delete_completed.take-focus(); }
 
     height: 79px;
 
@@ -134,16 +138,18 @@ export component ApplicationToolbar inherits Rectangle {
 
                 Rectangle { width: 1px; height: 32px; background: #27272a; }
 
-                IdmToolButton {
+                delete_selected := IdmToolButton {
                     text: "Delete";
-                    enabled: root.can_cancel;
-                    clicked => { root.cancel_download(); }
+                    enabled: root.can_delete_selected;
+                    clicked => { root.request_delete_selected(); }
                     IconDelete {}
                 }
 
-                IdmToolButton {
-                    text: "Delete C...";
-                    enabled: false;
+                delete_completed := IdmToolButton {
+                    width: 104px;
+                    text: "Delete Completed";
+                    enabled: root.can_delete_completed;
+                    clicked => { root.request_delete_completed(); }
                     IconDeleteCompleted {}
                 }
 
