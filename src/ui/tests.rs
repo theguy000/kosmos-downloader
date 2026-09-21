@@ -110,6 +110,9 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         });
     };
 
+    // Toolbar "Options" button: last button of the action row, right of "Delete Completed".
+    let click_options = || click(470.0, 52.0);
+
     for (width, height) in [(960, 540), (760, 420)] {
         window.set_size(slint::PhysicalSize::new(width, height));
         let mut pixels = vec![slint::Rgb8Pixel::default(); (width * height) as usize];
@@ -567,6 +570,113 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         window.dispatch_event(WindowEvent::KeyPressed {
             text: slint::platform::Key::Escape.into(),
         });
+
+        // The dialog mirrors the projected tab, so pin it to keep both window sizes deterministic.
+        ui.set_options_selected_tab(0);
+        click_options();
+        assert!(
+            ui.get_show_options_dialog(),
+            "Options button opens options dialog"
+        );
+        assert_eq!(
+            ui.get_options_selected_tab(),
+            0,
+            "Options opens on the first tab"
+        );
+        render();
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::RightArrow.into(),
+        });
+        assert_eq!(
+            ui.get_options_selected_tab(),
+            1,
+            "Right arrow advances the options tab"
+        );
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::LeftArrow.into(),
+        });
+        assert_eq!(ui.get_options_selected_tab(), 0);
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::LeftArrow.into(),
+        });
+        assert_eq!(
+            ui.get_options_selected_tab(),
+            0,
+            "The first options tab cannot move left"
+        );
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Escape.into(),
+        });
+        assert!(
+            !ui.get_show_options_dialog(),
+            "Escape dismisses options dialog"
+        );
+
+        // The options dialog is 560x380 and centered; its tab strip starts 52px below its top edge.
+        let options_left = width as f32 / 2.0 - 280.0;
+        let options_top = height as f32 / 2.0 - 190.0;
+
+        click_options();
+        assert!(
+            ui.get_show_options_dialog(),
+            "Options reopens after dismissal"
+        );
+        assert_eq!(
+            ui.get_options_selected_tab(),
+            0,
+            "The reopened dialog keeps the last selected tab"
+        );
+        render();
+        // The strip is 528px wide inside the dialog's 16px padding and splits into seven 75.7px
+        // tabs, so tab 1 spans x = 92..165 of the dialog; the strip's vertical center is 68px in.
+        let tab_1 = (options_left + 128.0, options_top + 68.0);
+        // The runtime can drop the first pointer event right after the dialog appears, and a
+        // repeated click on the same tab is idempotent, so click it twice.
+        click(tab_1.0, tab_1.1);
+        click(tab_1.0, tab_1.1);
+        assert_eq!(
+            ui.get_options_selected_tab(),
+            1,
+            "Clicking a tab selects it"
+        );
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Tab.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Return.into(),
+        });
+        assert!(
+            !ui.get_show_options_dialog(),
+            "Tab keeps focus inside the dialog and Return activates OK"
+        );
+
+        click_options();
+        render();
+        ui.set_options_selected_tab(6);
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::RightArrow.into(),
+        });
+        assert_eq!(
+            ui.get_options_selected_tab(),
+            6,
+            "The last options tab cannot move right"
+        );
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Escape.into(),
+        });
+        assert!(
+            !ui.get_show_options_dialog(),
+            "Escape still dismisses the options dialog"
+        );
+
+        click_options();
+        render();
+        // The close button is a 24px control 16px in from the dialog's right edge.
+        click(options_left + 532.0, options_top + 28.0);
+        assert!(
+            !ui.get_show_options_dialog(),
+            "The close button dismisses options dialog"
+        );
 
         for category in 0..10 {
             ui.set_selected_category(category);

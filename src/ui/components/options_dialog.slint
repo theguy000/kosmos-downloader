@@ -1,0 +1,189 @@
+import { DialogCloseButton, PointerButton } from "controls.slint";
+
+export component OptionsDialog inherits Rectangle {
+    in-out property <int> selected_tab: 0;
+    private property <[string]> tab_names: [
+        "General",
+        "File Types",
+        "Save To",
+        "Downloads",
+        "Sound",
+        "Proxy",
+        "Advanced",
+    ];
+
+    // Focus stops: 0 = tab strip, 1 = OK, 2 = Cancel.
+    private property <int> focus_index: strip_focus.has-focus ? 0
+        : (cancel_button.has-keyboard-focus ? 2 : 1);
+
+    callback dismiss();
+
+    function focus-item(index: int) {
+        if index == 0 { strip_focus.focus(); }
+        else if index == 1 { ok_button.take-focus(); }
+        else { cancel_button.take-focus(); }
+    }
+
+    background: #000000bb;
+    forward-focus: dialog_focus;
+    init => { root.focus-item(1); }
+
+    TouchArea {}
+
+    dialog_focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.dismiss();
+                return accept;
+            }
+            if event.text == Key.Tab {
+                root.focus-item(event.modifiers.shift
+                    ? (root.focus_index == 0 ? 2 : root.focus_index - 1)
+                    : mod(root.focus_index + 1, 3));
+                return accept;
+            }
+            if event.text == Key.LeftArrow {
+                root.selected_tab = max(0, root.selected_tab - 1);
+                return accept;
+            }
+            if event.text == Key.RightArrow {
+                root.selected_tab = min(root.tab_names.length - 1, root.selected_tab + 1);
+                return accept;
+            }
+            return reject;
+        }
+
+        Rectangle {
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            width: 560px;
+            height: 380px;
+            background: #1f1f23;
+            accessible-role: groupbox;
+            accessible-label: "Options";
+
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+
+                // Header
+                HorizontalLayout {
+                    height: 24px;
+
+                    Text {
+                        text: "Options";
+                        font-size: 15px;
+                        font-weight: 600;
+                        color: #f4f4f5;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {}
+
+                    DialogCloseButton {
+                        clicked => { root.dismiss(); }
+                    }
+                }
+
+                // Tab strip
+                Rectangle {
+                    height: 32px;
+                    background: #18181b;
+
+                    // Top and bottom borders for the strip
+                    Rectangle { y: 0px; height: 1px; background: #27272a; }
+                    Rectangle { y: parent.height - 1px; height: 1px; background: #27272a; }
+
+                    HorizontalLayout {
+                        spacing: 0px;
+
+                        for name[index] in root.tab_names: Rectangle {
+                            horizontal-stretch: 1;
+                            background: root.selected_tab == index ? #27272a : (tab_touch.has-hover ? #202024 : transparent);
+                            border-width: strip_focus.has-focus && root.selected_tab == index ? 1px : 0px;
+                            border-color: #8ba9d6;
+                            accessible-role: button;
+                            accessible-label: name;
+                            accessible-enabled: true;
+                            accessible-action-default => { root.selected_tab = index; }
+
+                            Text {
+                                x: 0px;
+                                y: 0px;
+                                width: parent.width;
+                                height: parent.height;
+                                text: name;
+                                font-size: 11px;
+                                font-weight: 400;
+                                color: root.selected_tab == index ? #edf3ff : (tab_touch.has-hover ? #d4d4d8 : #a1a1aa);
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            if root.selected_tab == index: Rectangle {
+                                x: 0px;
+                                y: parent.height - 2px;
+                                width: parent.width;
+                                height: 2px;
+                                background: #8ba9d6;
+                            }
+
+                            // Full-height 1px column divider between tabs
+                            if index < root.tab_names.length - 1: Rectangle {
+                                x: parent.width - 1px;
+                                y: 0px;
+                                width: 1px;
+                                height: parent.height;
+                                background: #27272a;
+                            }
+
+                            tab_touch := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.selected_tab = index;
+                                    strip_focus.focus();
+                                }
+                            }
+                        }
+                    }
+
+                    // One tab stop for the strip; keys bubble to the dialog scope, which owns
+                    // Tab (focus cycle) and the arrow keys (tab selection).
+                    strip_focus := FocusScope {
+                        width: parent.width;
+                        height: parent.height;
+                        key-pressed(event) => { return reject; }
+                    }
+                }
+
+                // Tab Content (blank placeholder area)
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: #18181b;
+                }
+
+                // Footer actions
+                HorizontalLayout {
+                    height: 36px;
+                    spacing: 8px;
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    ok_button := PointerButton {
+                        text: "OK";
+                        primary: true;
+                        clicked => { root.dismiss(); }
+                    }
+
+                    cancel_button := PointerButton {
+                        text: "Cancel";
+                        clicked => { root.dismiss(); }
+                    }
+                }
+            }
+        }
+    }
+}

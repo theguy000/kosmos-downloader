@@ -1,4 +1,4 @@
-import { DialogCheckBox, DialogInput, DialogRadioButton, PointerButton } from "controls.slint";
+import { DialogCheckBox, DialogCloseButton, DialogInput, DialogRadioButton, PointerButton } from "controls.slint";
 
 export component DuplicateDownloadDialog inherits Rectangle {
     in property <string> url: "";
@@ -101,7 +101,7 @@ export component DuplicateDownloadDialog inherits Rectangle {
 
                 // Title row
                 HorizontalLayout {
-                    height: 22px;
+                    height: 24px;
                     Text {
                         text: "Duplicate download link";
                         font-size: 14px;
@@ -110,18 +110,8 @@ export component DuplicateDownloadDialog inherits Rectangle {
                         vertical-alignment: center;
                     }
                     Rectangle {}
-                    TouchArea {
-                        width: 22px;
-                        height: 22px;
-                        mouse-cursor: pointer;
+                    DialogCloseButton {
                         clicked => { root.dismiss(); }
-                        Text {
-                            text: "✕";
-                            font-size: 12px;
-                            color: parent.has-hover ? #f4f4f5 : #a1a1aa;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
                     }
                 }
 

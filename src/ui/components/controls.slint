@@ -1,5 +1,5 @@
 import { Slider } from "std-widgets.slint";
-import { IconChevronDown, IconChevronRight } from "icons.slint";
+import { IconChevronDown, IconChevronRight, IconClose } from "icons.slint";
 
 export component CategoryRow inherits Rectangle {
     in property <string> text;
@@ -205,6 +205,43 @@ export component PointerButton inherits Rectangle {
     touch := TouchArea {
         enabled: root.enabled;
         mouse-cursor: root.enabled ? pointer : default;
+        clicked => { focus.focus(); root.clicked(); }
+    }
+}
+
+export component DialogCloseButton inherits Rectangle {
+    callback clicked();
+    out property <bool> has_keyboard_focus: focus.has-focus;
+    public function take-focus() { focus.focus(); }
+
+    width: 24px;
+    height: 24px;
+    background: touch.pressed ? #34343b : (touch.has-hover ? #2e2e34 : #252529);
+    border-width: 1px;
+    border-color: focus.has-focus || touch.pressed ? #8ba9d6 : (touch.has-hover ? #71717a : #3f3f46);
+    forward-focus: focus;
+    accessible-role: button;
+    accessible-label: "Close";
+    accessible-action-default => { root.clicked(); }
+
+    IconClose {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        stroke: touch.has-hover ? #f4f4f5 : #a1a1aa;
+    }
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
         clicked => { focus.focus(); root.clicked(); }
     }
 }

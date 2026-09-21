@@ -6,6 +6,7 @@ import { DeleteConfirmationDialog } from "delete_confirmation_dialog.slint";
 import { DownloadTable, TableItem } from "download_table.slint";
 import { DuplicateDownloadDialog } from "duplicate_dialog.slint";
 import { ErrorDialog } from "error_dialog.slint";
+import { OptionsDialog } from "options_dialog.slint";
 import { CategorySidebar } from "sidebar.slint";
 import { ApplicationToolbar } from "toolbar.slint";
 import { StatusFooter } from "transfer_details.slint";
@@ -24,6 +25,8 @@ export component MainWindow inherits Window {
     in-out property <string> dest_dir_text: "";
     in-out property <float> streams_count: 8;
     in-out property <bool> show_add_dialog: false;
+    in-out property <bool> show_options_dialog: false;
+    in-out property <int> options_selected_tab: 0;
     in-out property <bool> show_delete_dialog: false;
     in-out property <bool> show_duplicate_dialog: false;
     in-out property <string> duplicate_url: "";
@@ -101,6 +104,11 @@ export component MainWindow inherits Window {
         root.dismiss-duplicate();
     }
 
+    public function close-options-dialog() {
+        root.show_options_dialog = false;
+        toolbar.focus-options();
+    }
+
     VerticalLayout {
         padding: 0px;
         spacing: 0px;
@@ -116,6 +124,7 @@ export component MainWindow inherits Window {
             can-delete-selected: root.can_delete_selected;
             can-delete-completed: root.can_delete_completed;
             show-add-dialog => { root.show_add_dialog = true; }
+            show-options-dialog => { root.show_options_dialog = true; }
             pause-download => { root.pause_download(); }
             resume-download => { root.resume_download(); }
             request-delete-selected => { root.request-delete-selected(); }
@@ -173,6 +182,11 @@ export component MainWindow inherits Window {
         browse-folder => { root.browse_folder(); }
         start-download => { root.start_download(); }
         dismiss => { root.show_add_dialog = false; }
+    }
+
+    if root.show_options_dialog: OptionsDialog {
+        selected-tab <=> root.options_selected_tab;
+        dismiss => { root.close-options-dialog(); }
     }
 
     if root.show-delete-dialog: delete_dialog := DeleteConfirmationDialog {

@@ -20,6 +20,7 @@ export component ApplicationToolbar inherits Rectangle {
     in property <bool> can_delete_selected: false;
     in property <bool> can_delete_completed: false;
     callback show_add_dialog();
+    callback show_options_dialog();
     callback pause_download();
     callback resume_download();
     callback request_delete_selected();
@@ -27,6 +28,7 @@ export component ApplicationToolbar inherits Rectangle {
     callback open_file();
     public function focus-delete-selected() { delete_selected.take-focus(); }
     public function focus-delete-completed() { delete_completed.take-focus(); }
+    public function focus-options() { options.take-focus(); }
 
     height: 79px;
 
@@ -155,9 +157,9 @@ export component ApplicationToolbar inherits Rectangle {
 
                 Rectangle { width: 1px; height: 32px; background: #27272a; }
 
-                IdmToolButton {
+                options := IdmToolButton {
                     text: "Options";
-                    clicked => { root.show_add_dialog(); }
+                    clicked => { root.show_options_dialog(); }
                     IconOptions {}
                 }
             }

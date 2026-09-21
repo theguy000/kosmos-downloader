@@ -134,6 +134,13 @@ export component IconQueue inherits Path {
     stroke-width: 1.2px;
 }
 
+export component IconClose inherits Path {
+    width: 10px; height: 10px;
+    commands: "M 1.5 1.5 L 8.5 8.5 M 8.5 1.5 L 1.5 8.5";
+    stroke: #a1a1aa;
+    stroke-width: 1.4px;
+}
+
 export component FileTypeIcon inherits VerticalLayout {
     in property <string> file-type;
     alignment: center;
