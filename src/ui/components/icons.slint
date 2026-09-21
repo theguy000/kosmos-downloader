@@ -141,6 +141,17 @@ export component IconClose inherits Path {
     stroke-width: 1.4px;
 }
 
+export component IconSidebarToggle inherits Path {
+    in property <bool> collapsed: false;
+
+    width: 14px; height: 14px;
+    commands: root.collapsed
+        ? "M 1.5 1.5 L 12.5 1.5 L 12.5 12.5 L 1.5 12.5 Z M 5 1.5 L 5 12.5 M 8 5 L 10 7 L 8 9"
+        : "M 1.5 1.5 L 12.5 1.5 L 12.5 12.5 L 1.5 12.5 Z M 5 1.5 L 5 12.5 M 10 5 L 8 7 L 10 9";
+    stroke: #a1a1aa;
+    stroke-width: 1.2px;
+}
+
 export component FileTypeIcon inherits VerticalLayout {
     in property <string> file-type;
     alignment: center;

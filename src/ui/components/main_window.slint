@@ -42,6 +42,7 @@ export component MainWindow inherits Window {
     in-out property <int> selected_category: 0;
     in-out property <int> selected_row: 0;
     in-out property <bool> all_downloads_expanded: true;
+    in-out property <bool> sidebar_collapsed: false;
 
     in-out property <bool> has_active_download: false;
     in-out property <bool> is_downloading: false;
@@ -133,6 +134,7 @@ export component MainWindow inherits Window {
             CategorySidebar {
                 selected-category <=> root.selected_category;
                 all-downloads-expanded <=> root.all_downloads_expanded;
+                collapsed <=> root.sidebar_collapsed;
             }
 
             Rectangle { width: 1px; background: #27272a; }

@@ -1,4 +1,4 @@
-import { CategoryRow } from "controls.slint";
+import { CategoryRow, FocusStyle } from "controls.slint";
 import {
     IconArchive,
     IconAudio,
@@ -9,14 +9,16 @@ import {
     IconMedia,
     IconProgram,
     IconQueue,
+    IconSidebarToggle,
     IconUnfinished,
 } from "icons.slint";
 
 export component CategorySidebar inherits Rectangle {
     in-out property <int> selected_category;
     in-out property <bool> all_downloads_expanded;
+    in-out property <bool> collapsed: false;
 
-    width: 200px;
+    width: root.collapsed ? 28px : 200px;
     background: #18181b;
 
     VerticalLayout {
@@ -27,24 +29,60 @@ export component CategorySidebar inherits Rectangle {
             height: 25px;
             background: #202024;
 
-            HorizontalLayout {
-                padding-left: 10px;
-                padding-right: 10px;
-                alignment: space-between;
+            if !root.collapsed: Text {
+                x: 10px;
+                y: 0px;
+                width: parent.width - 36px;
+                height: parent.height;
+                text: "Categories";
+                font-size: 11px;
+                font-weight: 600;
+                color: #a1a1aa;
+                vertical-alignment: center;
+                overflow: elide;
+            }
 
-                Text {
-                    text: "Categories";
-                    font-size: 11px;
-                    font-weight: 600;
-                    color: #a1a1aa;
-                    vertical-alignment: center;
+            collapse_btn := Rectangle {
+                x: root.collapsed ? (parent.width - self.width) / 2 : parent.width - self.width - 4px;
+                y: (parent.height - self.height) / 2;
+                width: 20px;
+                height: 20px;
+                background: btn_touch.pressed ? #34343b : (btn_touch.has-hover ? #2b2b30 : transparent);
+                border-width: btn_focus.has-focus ? 1px : 0px;
+                border-color: FocusStyle.ring;
+                forward-focus: btn_focus;
+                accessible-role: button;
+                accessible-label: root.collapsed ? "Expand categories" : "Collapse categories";
+
+                IconSidebarToggle {
+                    collapsed: root.collapsed;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    stroke: btn_touch.has-hover ? #f4f4f5 : #a1a1aa;
+                }
+
+                btn_focus := FocusScope {
+                    key-pressed(event) => {
+                        if event.text == Key.Space || event.text == Key.Return {
+                            root.collapsed = !root.collapsed;
+                            return accept;
+                        }
+                        return reject;
+                    }
+                }
+
+                btn_touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.collapsed = !root.collapsed;
+                    }
                 }
             }
         }
 
         Rectangle { height: 1px; background: #27272a; }
 
-        VerticalLayout {
+        if !root.collapsed: VerticalLayout {
             padding: 6px;
             spacing: 0px;
 

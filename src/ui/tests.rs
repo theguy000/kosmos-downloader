@@ -177,6 +177,14 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         assert_eq!(ui.get_selected_category(), 1);
         render();
 
+        assert!(!ui.get_sidebar_collapsed());
+        click(186.0, 92.0);
+        assert!(ui.get_sidebar_collapsed());
+        render();
+        click(14.0, 92.0);
+        assert!(!ui.get_sidebar_collapsed());
+        render();
+
         let left = width as f32 / 2.0 - 230.0;
         let top = height as f32 / 2.0 - 124.0;
         ui.set_show_add_dialog(true);
