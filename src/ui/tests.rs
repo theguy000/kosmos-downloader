@@ -630,14 +630,11 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         // The strip is 528px wide inside the dialog's 16px padding and splits into seven 75.7px
         // tabs, so tab 1 spans x = 92..165 of the dialog; the strip's vertical center is 68px in.
         let tab_1 = (options_left + 128.0, options_top + 68.0);
-        // The runtime can drop the first pointer event right after the dialog appears, and a
-        // repeated click on the same tab is idempotent, so click it twice.
-        click(tab_1.0, tab_1.1);
         click(tab_1.0, tab_1.1);
         assert_eq!(
             ui.get_options_selected_tab(),
             1,
-            "Clicking a tab selects it"
+            "Clicking a tab selects it on the first click"
         );
         window.dispatch_event(WindowEvent::KeyPressed {
             text: slint::platform::Key::Tab.into(),
@@ -676,6 +673,98 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         assert!(
             !ui.get_show_options_dialog(),
             "The close button dismisses options dialog"
+        );
+
+        // Test Add URL button and AddDownloadDialog focus rotation.
+        click(39.0, 52.0);
+        assert!(ui.get_show_add_dialog(), "Add URL button opens dialog");
+        render();
+        // Tab rotates within AddDownloadDialog across its focus stops.
+        // With empty URL, Download is disabled, so Cancel (4) wraps directly to URL (0).
+        for _ in 0..4 {
+            window.dispatch_event(WindowEvent::KeyPressed {
+                text: slint::platform::Key::Tab.into(),
+            });
+        }
+        // At Cancel button: Tab should wrap to URL (0) and stay inside dialog.
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Tab.into(),
+        });
+        assert!(
+            ui.get_show_add_dialog(),
+            "Tab from Cancel keeps Add Download dialog open and focused"
+        );
+        // Shift+Tab from URL (0) should wrap backward to Cancel (4), skipping disabled Download.
+        // Return then activates Cancel, proving the backward wrap reached the Cancel button
+        // (with the URL empty, Return on any other stop leaves the dialog open).
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Shift.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Tab.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyReleased {
+            text: slint::platform::Key::Shift.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Return.into(),
+        });
+        assert!(
+            !ui.get_show_add_dialog(),
+            "Shift+Tab from URL wraps to Cancel, whose Return cancels the dialog"
+        );
+        // Pressing Escape dismisses Add Download dialog.
+        click(39.0, 52.0);
+        assert!(ui.get_show_add_dialog(), "Add URL reopens the dialog");
+        render();
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Escape.into(),
+        });
+        assert!(
+            !ui.get_show_add_dialog(),
+            "Escape dismisses Add Download dialog"
+        );
+
+        // The Download button is accent-filled, so its focus ring must be drawn outside
+        // the fill: ring pixel, 1px panel gap, then the fill. A ring on the fill itself
+        // would be the same blue and therefore invisible.
+        click(39.0, 52.0);
+        render();
+        for _ in 0..5 {
+            window.dispatch_event(WindowEvent::KeyPressed {
+                text: slint::platform::Key::Tab.into(),
+            });
+        }
+        window.request_redraw();
+        let mut probe = vec![slint::Rgb8Pixel::default(); (width * height) as usize];
+        window.draw_if_needed(|renderer| {
+            renderer.render(&mut probe, width as usize);
+        });
+        let pixel = |x: f32, y: f32| probe[(y as usize) * (width as usize) + (x as usize)];
+        assert_eq!(
+            pixel(left + 350.0, top + 210.0),
+            slint::Rgb8Pixel {
+                r: 0x8b,
+                g: 0xa9,
+                b: 0xd6
+            },
+            "Focused Download button draws the focus ring outside its accent fill"
+        );
+        assert_eq!(
+            pixel(left + 351.0, top + 210.0),
+            slint::Rgb8Pixel {
+                r: 0x1f,
+                g: 0x1f,
+                b: 0x23
+            },
+            "A 1px panel gap separates the ring from the accent fill"
+        );
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Escape.into(),
+        });
+        assert!(
+            !ui.get_show_add_dialog(),
+            "Escape dismisses the dialog again"
         );
 
         for category in 0..10 {

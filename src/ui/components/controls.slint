@@ -1,6 +1,11 @@
 import { Slider } from "std-widgets.slint";
 import { IconChevronDown, IconChevronRight, IconClose } from "icons.slint";
 
+// Single focus-indicator color for the whole app.
+export global FocusStyle {
+    out property <color> ring: #8ba9d6;
+}
+
 export component CategoryRow inherits Rectangle {
     in property <string> text;
     in property <bool> enabled: true;
@@ -22,7 +27,7 @@ export component CategoryRow inherits Rectangle {
     height: 26px;
     background: !root.enabled ? transparent : (root.selected ? #273248 : (touch.has-hover ? #242428 : transparent));
     border-width: root.enabled && focus.has-focus ? 1px : 0px;
-    border-color: #8ba9d6;
+    border-color: FocusStyle.ring;
     forward-focus: focus;
     accessible-role: button;
     accessible-label: root.enabled ? root.text : root.text + " (unavailable)";
@@ -112,7 +117,7 @@ export component IdmToolButton inherits Rectangle {
     background: !root.enabled ? transparent : (touch.pressed ? #34343b :
         (touch.has-hover ? #2b2b30 : transparent));
     border-width: root.enabled && focus.has-focus ? 1px : 0px;
-    border-color: #8ba9d6;
+    border-color: FocusStyle.ring;
     forward-focus: focus;
     accessible-role: button;
     accessible-label: root.text;
@@ -176,13 +181,22 @@ export component PointerButton inherits Rectangle {
         (root.primary ? (touch.has-hover ? #a7bfe2 : #8ba9d6) :
         (root.filled ? (touch.has-hover ? #45454d : #36363e) :
         (touch.has-hover ? #303036 : transparent)))));
-    border-width: root.enabled && focus.has-focus ? 1px : 0px;
-    border-color: #edf3ff;
     forward-focus: focus;
     accessible-role: button;
     accessible-label: root.text;
     accessible-enabled: root.enabled;
     accessible-action-default => { if root.enabled { root.clicked(); } }
+
+    // Drawn outside the fill, with a 1px gap, so the ring stays visible on accent-filled buttons.
+    if root.enabled && focus.has-focus: Rectangle {
+        x: -2px;
+        y: -2px;
+        width: parent.width + 4px;
+        height: parent.height + 4px;
+        background: transparent;
+        border-width: 1px;
+        border-color: FocusStyle.ring;
+    }
 
     Text {
         text: root.text;
@@ -218,7 +232,7 @@ export component DialogCloseButton inherits Rectangle {
     height: 24px;
     background: touch.pressed ? #34343b : (touch.has-hover ? #2e2e34 : #252529);
     border-width: 1px;
-    border-color: focus.has-focus || touch.pressed ? #8ba9d6 : (touch.has-hover ? #71717a : #3f3f46);
+    border-color: focus.has-focus || touch.pressed ? FocusStyle.ring : (touch.has-hover ? #71717a : #3f3f46);
     forward-focus: focus;
     accessible-role: button;
     accessible-label: "Close";
@@ -262,14 +276,25 @@ export component DialogCheckBox inherits Rectangle {
     accessible-checked <=> root.checked;
     accessible-action-default => { root.checked = !root.checked; }
 
+    // Drawn outside the box so the ring stays visible when the checked box is accent-filled.
+    Rectangle {
+        x: 1px;
+        y: (parent.height - self.height) / 2;
+        width: 20px;
+        height: 20px;
+        background: transparent;
+        border-width: focus.has-focus ? 1px : 0px;
+        border-color: FocusStyle.ring;
+    }
+
     Rectangle {
         x: 2px;
         y: (parent.height - self.height) / 2;
         width: 18px;
         height: 18px;
         background: root.checked ? #8ba9d6 : #2b2b30;
-        border-width: focus.has-focus ? 2px : 1px;
-        border-color: focus.has-focus ? #edf3ff : #71717a;
+        border-width: 1px;
+        border-color: #71717a;
 
         if root.checked: Path {
             x: 2px;
@@ -333,7 +358,7 @@ export component DialogRadioButton inherits Rectangle {
         height: 16px;
         background: #2b2b30;
         border-width: 1px;
-        border-color: root.selected ? (focus.has-focus ? #a7bfe2 : #8ba9d6) : (focus.has-focus ? #a1a1aa : #71717a);
+        border-color: root.selected || focus.has-focus ? FocusStyle.ring : #71717a;
 
         if root.selected: Rectangle {
             x: 4px;
@@ -377,6 +402,9 @@ export component DialogInput inherits Rectangle {
     in property <string> placeholder-text;
     in property <string> label;
     in property <bool> read-only: false;
+    out property <bool> has_keyboard_focus: input.has-focus;
+    public function take-focus() { input.focus(); }
+    callback accepted();
     private property <length> menu-x;
     private property <length> menu-y;
     private property <int> menu-index: -1;
@@ -434,6 +462,7 @@ export component DialogInput inherits Rectangle {
             height: parent.height;
             text <=> root.text;
             single-line: true;
+            accepted => { root.accepted(); }
             font-size: 12px;
             color: #f4f4f5;
             selection-background-color: #8ba9d6;
@@ -549,12 +578,14 @@ export component DialogInput inherits Rectangle {
     Rectangle {
         y: parent.height - 2px;
         height: 2px;
-        background: input.has-focus ? #8ba9d6 : transparent;
+        background: input.has-focus ? FocusStyle.ring : transparent;
     }
 }
 
 export component DialogSlider inherits Rectangle {
     in-out property <float> value;
+    out property <bool> has_keyboard_focus: slider.has-focus;
+    public function take-focus() { slider.focus(); }
     height: 28px;
     horizontal-stretch: 1;
     forward-focus: slider;
@@ -569,11 +600,20 @@ export component DialogSlider inherits Rectangle {
             background: #8ba9d6;
         }
     }
+    // Drawn outside the handle so the ring stays visible on the accent-filled handle.
+    if slider.has-focus: Rectangle {
+        x: 2px + (parent.width - 20px) * (root.value - 1) / 15;
+        y: (parent.height - self.height) / 2;
+        width: 16px; height: 20px;
+        background: transparent;
+        border-width: 1px;
+        border-color: FocusStyle.ring;
+    }
     Rectangle {
         x: 4px + (parent.width - 20px) * (root.value - 1) / 15;
         y: (parent.height - self.height) / 2;
         width: 12px; height: 16px;
-        background: slider.has-focus ? #edf3ff : #8ba9d6;
+        background: #8ba9d6;
     }
     // Keep native slider input and accessibility; replace only its paint.
     slider := Slider {

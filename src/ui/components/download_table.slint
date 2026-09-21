@@ -1,3 +1,4 @@
+import { FocusStyle } from "controls.slint";
 import { FileTypeIcon } from "icons.slint";
 import { PausedTransferDetails } from "transfer_details.slint";
 import { ScrollView } from "std-widgets.slint";
@@ -202,7 +203,7 @@ export component DownloadTable inherits ScrollView {
                 height: 25px;
                 background: root.selected_row == 0 ? #273248 : (act_t.has-hover ? #202024 : #18181b);
                 border-width: row_focus.has-focus ? 1px : 0px;
-                border-color: #8ba9d6;
+                border-color: FocusStyle.ring;
                 forward-focus: row_focus;
                 accessible-role: button;
                 accessible-label: root.active_filename + ", " + root.active_status;

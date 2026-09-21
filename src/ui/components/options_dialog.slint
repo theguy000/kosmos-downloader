@@ -1,4 +1,4 @@
-import { DialogCloseButton, PointerButton } from "controls.slint";
+import { DialogCloseButton, FocusStyle, PointerButton } from "controls.slint";
 
 export component OptionsDialog inherits Rectangle {
     in-out property <int> selected_tab: 0;
@@ -101,7 +101,7 @@ export component OptionsDialog inherits Rectangle {
                             horizontal-stretch: 1;
                             background: root.selected_tab == index ? #27272a : (tab_touch.has-hover ? #202024 : transparent);
                             border-width: strip_focus.has-focus && root.selected_tab == index ? 1px : 0px;
-                            border-color: #8ba9d6;
+                            border-color: FocusStyle.ring;
                             accessible-role: button;
                             accessible-label: name;
                             accessible-enabled: true;
@@ -153,8 +153,8 @@ export component OptionsDialog inherits Rectangle {
                     // One tab stop for the strip; keys bubble to the dialog scope, which owns
                     // Tab (focus cycle) and the arrow keys (tab selection).
                     strip_focus := FocusScope {
-                        width: parent.width;
-                        height: parent.height;
+                        width: 0px;
+                        height: 0px;
                         key-pressed(event) => { return reject; }
                     }
                 }

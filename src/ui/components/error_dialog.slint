@@ -4,47 +4,63 @@ export component ErrorDialog inherits Rectangle {
     in-out property <string> active_error_message: "";
     in-out property <string> action_error_message: "";
 
+    function dismiss() {
+        root.action_error_message = "";
+        root.active_error_message = "";
+    }
+
     background: #000000bb;
+    forward-focus: dialog_focus;
+    init => { ok_button.take-focus(); }
 
     TouchArea {}
 
-    Rectangle {
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-        width: 440px;
-        height: 188px;
-        background: #1f1f23;
-
-        VerticalLayout {
-            padding: 20px;
-            spacing: 12px;
-
-            Text {
-                height: 24px;
-                text: root.active_error_message != "" ? "Download failed" : "Action unavailable";
-                font-size: 15px;
-                font-weight: 600;
-                color: #f4f4f5;
+    dialog_focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape || event.text == Key.Return || event.text == " " {
+                root.dismiss();
+                return accept;
             }
+            return reject;
+        }
 
-            Text {
-                text: root.action_error_message != "" ? root.action_error_message : root.active_error_message;
-                color: #d4d4d8;
-                font-size: 12px;
-                wrap: word-wrap;
-            }
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 440px;
+            height: 188px;
+            background: #1f1f23;
+            accessible-role: groupbox;
+            accessible-label: root.active_error_message != "" ? "Download failed" : "Action unavailable";
 
-            Rectangle {}
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
 
-            HorizontalLayout {
-                alignment: end;
+                Text {
+                    height: 24px;
+                    text: root.active_error_message != "" ? "Download failed" : "Action unavailable";
+                    font-size: 15px;
+                    font-weight: 600;
+                    color: #f4f4f5;
+                }
 
-                PointerButton {
-                    text: "OK";
-                    primary: true;
-                    clicked => {
-                        root.action_error_message = "";
-                        root.active_error_message = "";
+                Text {
+                    text: root.action_error_message != "" ? root.action_error_message : root.active_error_message;
+                    color: #d4d4d8;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                Rectangle {}
+
+                HorizontalLayout {
+                    alignment: end;
+
+                    ok_button := PointerButton {
+                        text: "OK";
+                        primary: true;
+                        clicked => { root.dismiss(); }
                     }
                 }
             }

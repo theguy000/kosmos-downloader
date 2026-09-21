@@ -91,6 +91,11 @@ export component MainWindow inherits Window {
     callback browse_folder();
     callback open_file();
 
+    public function close-add-dialog() {
+        root.show_add_dialog = false;
+        toolbar.focus-add();
+    }
+
     public function close-delete-dialog() {
         root.show_delete_dialog = false;
         root.delete_file = false;
@@ -181,7 +186,7 @@ export component MainWindow inherits Window {
         streams-count <=> root.streams_count;
         browse-folder => { root.browse_folder(); }
         start-download => { root.start_download(); }
-        dismiss => { root.show_add_dialog = false; }
+        dismiss => { root.close-add-dialog(); }
     }
 
     if root.show_options_dialog: OptionsDialog {

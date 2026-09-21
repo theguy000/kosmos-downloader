@@ -29,6 +29,7 @@ export component ApplicationToolbar inherits Rectangle {
     public function focus-delete-selected() { delete_selected.take-focus(); }
     public function focus-delete-completed() { delete_completed.take-focus(); }
     public function focus-options() { options.take-focus(); }
+    public function focus-add() { add_btn.take-focus(); }
 
     height: 79px;
 
@@ -110,7 +111,7 @@ export component ApplicationToolbar inherits Rectangle {
                 spacing: 2px;
                 alignment: start;
 
-                IdmToolButton {
+                add_btn := IdmToolButton {
                     text: "Add URL";
                     clicked => { root.show_add_dialog(); }
                     IconAdd {}

@@ -8,77 +8,133 @@ export component AddDownloadDialog inherits Rectangle {
     callback start_download();
     callback dismiss();
 
+    // Focus stops: 0 = URL, 1 = Save To, 2 = Browse, 3 = Streams, 4 = Cancel, 5 = Download
+    private property <int> focus_index:
+        url_input.has_keyboard_focus ? 0 :
+        (dest_dir_input.has_keyboard_focus ? 1 :
+        (browse_button.has_keyboard_focus ? 2 :
+        (streams_slider.has_keyboard_focus ? 3 :
+        (cancel_button.has_keyboard_focus ? 4 :
+        (download_button.has_keyboard_focus ? 5 : 0)))));
+
+    function focus-item(index: int) {
+        if index == 0 { url_input.take-focus(); }
+        else if index == 1 { dest_dir_input.take-focus(); }
+        else if index == 2 { browse_button.take-focus(); }
+        else if index == 3 { streams_slider.take-focus(); }
+        else if index == 4 { cancel_button.take-focus(); }
+        else { download_button.take-focus(); }
+    }
+
+    function submit() {
+        if root.url_text != "" {
+            root.dismiss();
+            root.start_download();
+        }
+    }
+
     background: #000000bb;
+    forward-focus: dialog_focus;
+    init => { root.focus-item(0); }
 
     TouchArea {}
 
-    Rectangle {
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-        width: 460px;
-        height: 248px;
-        background: #1f1f23;
-
-        VerticalLayout {
-            padding: 20px;
-            spacing: 12px;
-
-            Text {
-                height: 24px;
-                text: "Add New Download";
-                font-size: 15px;
-                font-weight: 600;
-                color: #f4f4f5;
+    dialog_focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.dismiss();
+                return accept;
             }
-
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "URL:"; width: 55px; font-size: 11px; color: #a1a1aa; vertical-alignment: center; }
-                DialogInput {
-                    text <=> root.url_text;
-                    label: "URL";
-                }
+            if event.text == Key.Tab {
+                root.focus-item(event.modifiers.shift
+                    ? (root.focus_index == 0 ? (root.url_text == "" ? 4 : 5) : root.focus_index - 1)
+                    : (root.focus_index >= (root.url_text == "" ? 4 : 5) ? 0 : root.focus_index + 1));
+                return accept;
             }
-
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "Save to:"; width: 55px; font-size: 11px; color: #a1a1aa; vertical-alignment: center; }
-                DialogInput { text <=> root.dest_dir_text; label: "Save to"; }
-                PointerButton {
-                    text: "Browse";
-                    filled: true;
-                    clicked => { root.browse_folder(); }
-                }
+            if event.text == Key.Return {
+                // The inputs and buttons consume Return themselves (via accepted/clicked);
+                // only the slider bubbles it up here.
+                root.submit();
+                return accept;
             }
+            return reject;
+        }
 
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "Streams:"; width: 55px; font-size: 11px; color: #a1a1aa; vertical-alignment: center; }
-                DialogSlider {
-                    value <=> root.streams_count;
-                }
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 460px;
+            height: 248px;
+            background: #1f1f23;
+            accessible-role: groupbox;
+            accessible-label: "Add New Download";
+
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+
                 Text {
-                    text: Math.round(root.streams_count) + " threads";
-                    width: 65px; font-size: 11px; color: #a1a1aa; vertical-alignment: center;
-                }
-            }
-
-            HorizontalLayout {
-                alignment: end;
-                spacing: 8px;
-
-                PointerButton {
-                    text: "Cancel";
-                    clicked => { root.dismiss(); }
+                    height: 24px;
+                    text: "Add New Download";
+                    font-size: 15px;
+                    font-weight: 600;
+                    color: #f4f4f5;
                 }
 
-                PointerButton {
-                    text: "Download";
-                    primary: true;
-                    enabled: root.url_text != "";
-                    clicked => {
-                        root.dismiss();
-                        root.start_download();
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "URL:"; width: 55px; font-size: 11px; color: #a1a1aa; vertical-alignment: center; }
+                    url_input := DialogInput {
+                        text <=> root.url_text;
+                        label: "URL";
+                        accepted => { root.submit(); }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "Save to:"; width: 55px; font-size: 11px; color: #a1a1aa; vertical-alignment: center; }
+                    dest_dir_input := DialogInput {
+                        text <=> root.dest_dir_text;
+                        label: "Save to";
+                        accepted => { root.submit(); }
+                    }
+                    browse_button := PointerButton {
+                        text: "Browse";
+                        filled: true;
+                        clicked => { root.browse_folder(); }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "Streams:"; width: 55px; font-size: 11px; color: #a1a1aa; vertical-alignment: center; }
+                    streams_slider := DialogSlider {
+                        value <=> root.streams_count;
+                    }
+                    Text {
+                        text: Math.round(root.streams_count) + " threads";
+                        width: 65px; font-size: 11px; color: #a1a1aa; vertical-alignment: center;
+                    }
+                }
+
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+
+                    cancel_button := PointerButton {
+                        text: "Cancel";
+                        clicked => { root.dismiss(); }
+                    }
+
+                    download_button := PointerButton {
+                        text: "Download";
+                        primary: true;
+                        enabled: root.url_text != "";
+                        clicked => {
+                            root.dismiss();
+                            root.start_download();
+                        }
                     }
                 }
             }
