@@ -690,39 +690,37 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         click_options();
         render();
         ui.set_options_selected_tab(1);
-        // Shift+Tab from default OK button moves focus backward to the tab strip.
-        window.dispatch_event(WindowEvent::KeyPressed {
-            text: slint::platform::Key::Shift.into(),
-        });
-        window.dispatch_event(WindowEvent::KeyPressed {
-            text: slint::platform::Key::Tab.into(),
-        });
-        window.dispatch_event(WindowEvent::KeyReleased {
-            text: slint::platform::Key::Shift.into(),
-        });
-        assert_eq!(ui.get_options_selected_tab(), 1);
-        let probe = capture();
         let ring = slint::Rgb8Pixel {
             r: 0x8b,
             g: 0xa9,
             b: 0xd6,
         };
+        let probe_initial = capture();
+        assert_ne!(
+            pixel(&probe_initial, options_left + 428.0, options_top + 326.0),
+            ring,
+            "Opening options dialog does not show focus ring on OK button"
+        );
+
+        // Tab from initial state moves focus to the tab strip.
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Tab.into(),
+        });
+        assert_eq!(ui.get_options_selected_tab(), 1);
+        let probe = capture();
         assert!(
             (164..=168)
                 .any(|dx| pixel(&probe, options_left + dx as f32, options_top + 68.0) == ring),
             "Keyboard-focused tab draws focus ring on its right border without divider overlap"
         );
 
-        // The close button is a 24px control 16px in from the dialog's right edge.
+        // The close button was removed, so clicking the header corner does not dismiss options dialog.
         click(options_left + 532.0, options_top + 28.0);
         assert!(
-            !ui.get_show_options_dialog(),
-            "The close button dismisses options dialog"
+            ui.get_show_options_dialog(),
+            "Options dialog remains open after clicking header corner (close button removed)"
         );
 
-        click_options();
-        assert!(ui.get_show_options_dialog());
-        render();
         // Cancel button is in the 36px footer (16px from bottom, 16px from right, 72px wide).
         click(options_left + 508.0, options_top + 346.0);
         assert!(
