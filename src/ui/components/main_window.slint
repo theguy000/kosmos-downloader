@@ -91,11 +91,6 @@ export component MainWindow inherits Window {
     callback browse_folder();
     callback open_file();
 
-    public function close-add-dialog() {
-        root.show_add_dialog = false;
-        toolbar.focus-add();
-    }
-
     public function close-delete-dialog() {
         root.show_delete_dialog = false;
         root.delete_file = false;
@@ -107,11 +102,6 @@ export component MainWindow inherits Window {
     public function close-duplicate-dialog() {
         root.show_duplicate_dialog = false;
         root.dismiss-duplicate();
-    }
-
-    public function close-options-dialog() {
-        root.show_options_dialog = false;
-        toolbar.focus-options();
     }
 
     VerticalLayout {
@@ -186,12 +176,18 @@ export component MainWindow inherits Window {
         streams-count <=> root.streams_count;
         browse-folder => { root.browse_folder(); }
         start-download => { root.start_download(); }
-        dismiss => { root.close-add-dialog(); }
+        dismiss(from_keyboard) => {
+            root.show_add_dialog = false;
+            if from_keyboard { toolbar.focus-add(); }
+        }
     }
 
     if root.show_options_dialog: OptionsDialog {
         selected-tab <=> root.options_selected_tab;
-        dismiss => { root.close-options-dialog(); }
+        dismiss(from_keyboard) => {
+            root.show_options_dialog = false;
+            if from_keyboard { toolbar.focus-options(); }
+        }
     }
 
     if root.show-delete-dialog: delete_dialog := DeleteConfirmationDialog {
@@ -199,7 +195,15 @@ export component MainWindow inherits Window {
         completed-only: root.delete-completed-only;
         target-completed: root.delete-target-completed;
         delete-file <=> root.delete-file;
-        dismiss => { root.close-delete-dialog(); }
+        dismiss(from_keyboard) => {
+            root.show_delete_dialog = false;
+            root.delete_file = false;
+            if from_keyboard {
+                if root.delete_completed_only { toolbar.focus-delete-completed(); }
+                else { toolbar.focus-delete-selected(); }
+            }
+            root.dismiss-delete();
+        }
         confirm(delete-file) => { root.confirm-delete(delete-file); }
     }
 

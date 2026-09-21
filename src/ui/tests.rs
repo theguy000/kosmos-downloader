@@ -636,6 +636,27 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
             1,
             "Clicking a tab selects it on the first click"
         );
+        let capture = || {
+            window.request_redraw();
+            let mut probe = vec![slint::Rgb8Pixel::default(); (width * height) as usize];
+            window.draw_if_needed(|renderer| {
+                renderer.render(&mut probe, width as usize);
+            });
+            probe
+        };
+        let pixel = |probe: &[slint::Rgb8Pixel], x: f32, y: f32| {
+            probe[(y as usize) * (width as usize) + (x as usize)]
+        };
+        let probe = capture();
+        assert_ne!(
+            pixel(&probe, tab_1.0, options_top + 52.0),
+            slint::Rgb8Pixel {
+                r: 0x8b,
+                g: 0xa9,
+                b: 0xd6
+            },
+            "Mouse click on tab does not show focus ring"
+        );
         window.dispatch_event(WindowEvent::KeyPressed {
             text: slint::platform::Key::Tab.into(),
         });
@@ -668,11 +689,51 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
 
         click_options();
         render();
+        ui.set_options_selected_tab(1);
+        // Shift+Tab from default OK button moves focus backward to the tab strip.
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Shift.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Tab.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyReleased {
+            text: slint::platform::Key::Shift.into(),
+        });
+        assert_eq!(ui.get_options_selected_tab(), 1);
+        let probe = capture();
+        let ring = slint::Rgb8Pixel {
+            r: 0x8b,
+            g: 0xa9,
+            b: 0xd6,
+        };
+        assert!(
+            (164..=168)
+                .any(|dx| pixel(&probe, options_left + dx as f32, options_top + 68.0) == ring),
+            "Keyboard-focused tab draws focus ring on its right border without divider overlap"
+        );
+
         // The close button is a 24px control 16px in from the dialog's right edge.
         click(options_left + 532.0, options_top + 28.0);
         assert!(
             !ui.get_show_options_dialog(),
             "The close button dismisses options dialog"
+        );
+
+        click_options();
+        assert!(ui.get_show_options_dialog());
+        render();
+        // Cancel button is in the 36px footer (16px from bottom, 16px from right, 72px wide).
+        click(options_left + 508.0, options_top + 346.0);
+        assert!(
+            !ui.get_show_options_dialog(),
+            "Clicking Cancel dismisses the options dialog"
+        );
+        let probe = capture();
+        assert_ne!(
+            pixel(&probe, 470.0, 27.0),
+            ring,
+            "Closing options dialog with mouse does not show focus ring on toolbar button"
         );
 
         // Test Add URL button and AddDownloadDialog focus rotation.

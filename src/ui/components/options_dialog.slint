@@ -15,10 +15,12 @@ export component OptionsDialog inherits Rectangle {
     // Focus stops: 0 = tab strip, 1 = OK, 2 = Cancel.
     private property <int> focus_index: strip_focus.has-focus ? 0
         : (cancel_button.has-keyboard-focus ? 2 : 1);
+    private property <bool> keyboard_focused: false;
 
-    callback dismiss();
+    callback dismiss(bool);
 
     function focus-item(index: int) {
+        root.keyboard_focused = index == 0;
         if index == 0 { strip_focus.focus(); }
         else if index == 1 { ok_button.take-focus(); }
         else { cancel_button.take-focus(); }
@@ -33,7 +35,7 @@ export component OptionsDialog inherits Rectangle {
     dialog_focus := FocusScope {
         key-pressed(event) => {
             if event.text == Key.Escape {
-                root.dismiss();
+                root.dismiss(true);
                 return accept;
             }
             if event.text == Key.Tab {
@@ -43,10 +45,12 @@ export component OptionsDialog inherits Rectangle {
                 return accept;
             }
             if event.text == Key.LeftArrow {
+                root.keyboard_focused = true;
                 root.selected_tab = max(0, root.selected_tab - 1);
                 return accept;
             }
             if event.text == Key.RightArrow {
+                root.keyboard_focused = true;
                 root.selected_tab = min(root.tab_names.length - 1, root.selected_tab + 1);
                 return accept;
             }
@@ -81,7 +85,7 @@ export component OptionsDialog inherits Rectangle {
                     Rectangle {}
 
                     DialogCloseButton {
-                        clicked => { root.dismiss(); }
+                        clicked(from_keyboard) => { root.dismiss(from_keyboard); }
                     }
                 }
 
@@ -100,7 +104,7 @@ export component OptionsDialog inherits Rectangle {
                         for name[index] in root.tab_names: Rectangle {
                             horizontal-stretch: 1;
                             background: root.selected_tab == index ? #27272a : (tab_touch.has-hover ? #202024 : transparent);
-                            border-width: strip_focus.has-focus && root.selected_tab == index ? 1px : 0px;
+                            border-width: strip_focus.has-focus && root.keyboard_focused && root.selected_tab == index ? 1px : 0px;
                             border-color: FocusStyle.ring;
                             accessible-role: button;
                             accessible-label: name;
@@ -121,6 +125,15 @@ export component OptionsDialog inherits Rectangle {
                                 overflow: elide;
                             }
 
+                            // Full-height 1px column divider between tabs
+                            if index < root.tab_names.length - 1 && root.selected_tab != index: Rectangle {
+                                x: parent.width - 1px;
+                                y: 0px;
+                                width: 1px;
+                                height: parent.height;
+                                background: #27272a;
+                            }
+
                             if root.selected_tab == index: Rectangle {
                                 x: 0px;
                                 y: parent.height - 2px;
@@ -129,21 +142,13 @@ export component OptionsDialog inherits Rectangle {
                                 background: #8ba9d6;
                             }
 
-                            // Full-height 1px column divider between tabs
-                            if index < root.tab_names.length - 1: Rectangle {
-                                x: parent.width - 1px;
-                                y: 0px;
-                                width: 1px;
-                                height: parent.height;
-                                background: #27272a;
-                            }
-
                             tab_touch := TouchArea {
                                 width: parent.width;
                                 height: parent.height;
                                 mouse-cursor: pointer;
                                 clicked => {
                                     root.selected_tab = index;
+                                    root.keyboard_focused = false;
                                     strip_focus.focus();
                                 }
                             }
@@ -175,12 +180,12 @@ export component OptionsDialog inherits Rectangle {
                     ok_button := PointerButton {
                         text: "OK";
                         primary: true;
-                        clicked => { root.dismiss(); }
+                        clicked(from_keyboard) => { root.dismiss(from_keyboard); }
                     }
 
                     cancel_button := PointerButton {
                         text: "Cancel";
-                        clicked => { root.dismiss(); }
+                        clicked(from_keyboard) => { root.dismiss(from_keyboard); }
                     }
                 }
             }

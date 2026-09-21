@@ -170,7 +170,7 @@ export component PointerButton inherits Rectangle {
     in property <bool> danger: false;
     in property <bool> enabled: true;
     out property <bool> has_keyboard_focus: focus.has-focus;
-    callback clicked();
+    callback clicked(bool);
     public function take-focus() { focus.focus(); }
 
     width: root.text == "Download" ? 88px : 72px;
@@ -185,7 +185,7 @@ export component PointerButton inherits Rectangle {
     accessible-role: button;
     accessible-label: root.text;
     accessible-enabled: root.enabled;
-    accessible-action-default => { if root.enabled { root.clicked(); } }
+    accessible-action-default => { if root.enabled { root.clicked(true); } }
 
     // Drawn outside the fill, with a 1px gap, so the ring stays visible on accent-filled buttons.
     if root.enabled && focus.has-focus: Rectangle {
@@ -210,7 +210,7 @@ export component PointerButton inherits Rectangle {
         enabled: root.enabled;
         key-pressed(event) => {
             if event.text == Key.Space || event.text == Key.Return {
-                root.clicked();
+                root.clicked(true);
                 return accept;
             }
             return reject;
@@ -219,12 +219,12 @@ export component PointerButton inherits Rectangle {
     touch := TouchArea {
         enabled: root.enabled;
         mouse-cursor: root.enabled ? pointer : default;
-        clicked => { focus.focus(); root.clicked(); }
+        clicked => { focus.focus(); root.clicked(false); }
     }
 }
 
 export component DialogCloseButton inherits Rectangle {
-    callback clicked();
+    callback clicked(bool);
     out property <bool> has_keyboard_focus: focus.has-focus;
     public function take-focus() { focus.focus(); }
 
@@ -236,7 +236,7 @@ export component DialogCloseButton inherits Rectangle {
     forward-focus: focus;
     accessible-role: button;
     accessible-label: "Close";
-    accessible-action-default => { root.clicked(); }
+    accessible-action-default => { root.clicked(true); }
 
     IconClose {
         x: (parent.width - self.width) / 2;
@@ -247,7 +247,7 @@ export component DialogCloseButton inherits Rectangle {
     focus := FocusScope {
         key-pressed(event) => {
             if event.text == Key.Space || event.text == Key.Return {
-                root.clicked();
+                root.clicked(true);
                 return accept;
             }
             return reject;
@@ -256,7 +256,7 @@ export component DialogCloseButton inherits Rectangle {
 
     touch := TouchArea {
         mouse-cursor: pointer;
-        clicked => { focus.focus(); root.clicked(); }
+        clicked => { focus.focus(); root.clicked(false); }
     }
 }
 

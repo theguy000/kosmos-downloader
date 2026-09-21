@@ -8,7 +8,7 @@ export component DeleteConfirmationDialog inherits Rectangle {
     private property <int> focus_index: delete_file_control.has-keyboard-focus ? 0
         : (cancel_button.has-keyboard-focus ? 1
         : (delete_button.has-keyboard-focus ? 2 : 1));
-    callback dismiss();
+    callback dismiss(bool);
     callback confirm(bool);
 
     function focus-item(index: int) {
@@ -26,7 +26,7 @@ export component DeleteConfirmationDialog inherits Rectangle {
     dialog_focus := FocusScope {
         key-pressed(event) => {
             if event.text == Key.Escape {
-                root.dismiss();
+                root.dismiss(true);
                 return accept;
             }
             if event.text == Key.Tab {
@@ -39,7 +39,7 @@ export component DeleteConfirmationDialog inherits Rectangle {
                 if root.focus_index == 2 {
                     root.confirm(root.delete_file);
                 } else {
-                    root.dismiss();
+                    root.dismiss(true);
                 }
                 return accept;
             }
@@ -49,7 +49,7 @@ export component DeleteConfirmationDialog inherits Rectangle {
                 } else if root.focus_index == 2 {
                     root.confirm(root.delete_file);
                 } else {
-                    root.dismiss();
+                    root.dismiss(true);
                 }
                 return accept;
             }
@@ -115,7 +115,7 @@ export component DeleteConfirmationDialog inherits Rectangle {
 
                     cancel_button := PointerButton {
                         text: "Cancel";
-                        clicked => { root.dismiss(); }
+                        clicked(from_keyboard) => { root.dismiss(from_keyboard); }
                     }
 
                     delete_button := PointerButton {

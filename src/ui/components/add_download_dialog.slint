@@ -6,7 +6,7 @@ export component AddDownloadDialog inherits Rectangle {
     in-out property <float> streams_count: 8;
     callback browse_folder();
     callback start_download();
-    callback dismiss();
+    callback dismiss(bool);
 
     // Focus stops: 0 = URL, 1 = Save To, 2 = Browse, 3 = Streams, 4 = Cancel, 5 = Download
     private property <int> focus_index:
@@ -28,7 +28,7 @@ export component AddDownloadDialog inherits Rectangle {
 
     function submit() {
         if root.url_text != "" {
-            root.dismiss();
+            root.dismiss(true);
             root.start_download();
         }
     }
@@ -42,7 +42,7 @@ export component AddDownloadDialog inherits Rectangle {
     dialog_focus := FocusScope {
         key-pressed(event) => {
             if event.text == Key.Escape {
-                root.dismiss();
+                root.dismiss(true);
                 return accept;
             }
             if event.text == Key.Tab {
@@ -124,15 +124,15 @@ export component AddDownloadDialog inherits Rectangle {
 
                     cancel_button := PointerButton {
                         text: "Cancel";
-                        clicked => { root.dismiss(); }
+                        clicked(from_keyboard) => { root.dismiss(from_keyboard); }
                     }
 
                     download_button := PointerButton {
                         text: "Download";
                         primary: true;
                         enabled: root.url_text != "";
-                        clicked => {
-                            root.dismiss();
+                        clicked(from_keyboard) => {
+                            root.dismiss(from_keyboard);
                             root.start_download();
                         }
                     }
