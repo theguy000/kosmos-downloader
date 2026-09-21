@@ -1,7 +1,7 @@
 use super::scheduler::ActiveChunk;
 use super::uses_range_workers;
 use crate::client::{ClientError, HttpClient, RemoteFileInfo, is_strong_etag};
-use crate::engine::chunks::ChunkRange;
+use crate::engine::chunks::{ChunkRange, calculate_chunks};
 use crate::engine::worker::{OVERLAP_BYTES, WorkerError};
 use crate::storage::{Storage, StorageError};
 
@@ -68,6 +68,35 @@ impl SavedDownload {
         }
         Ok(())
     }
+}
+
+/// Seeds chunks for a file whose first `existing` bytes are already on disk.
+/// The prefix chunk acknowledges the saved bytes so only the rest is requested.
+pub(super) fn seed_existing_prefix(
+    existing: u64,
+    total: u64,
+    num_chunks: usize,
+) -> Vec<ActiveChunk> {
+    let mut chunks = Vec::new();
+    if existing > 0 {
+        let mut prefix = ActiveChunk::new(ChunkRange {
+            id: 0,
+            start: 0,
+            end: existing - 1,
+        });
+        prefix.downloaded = existing;
+        prefix.is_done = true;
+        chunks.push(prefix);
+    }
+    for range in calculate_chunks(total - existing, num_chunks) {
+        let id = chunks.len();
+        chunks.push(ActiveChunk::new(ChunkRange {
+            id,
+            start: range.start + existing,
+            end: range.end + existing,
+        }));
+    }
+    chunks
 }
 
 pub(super) fn resume_chunks_are_valid(chunks: &[ActiveChunk], total_size: u64) -> bool {

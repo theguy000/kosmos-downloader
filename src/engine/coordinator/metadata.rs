@@ -1,3 +1,4 @@
+use super::duplicate::{ExistingFile, TargetError, TargetMode, create_target};
 use super::resume::{SavedDownload, resume_chunks_are_valid};
 use super::scheduler::{MAX_CHUNK_RETRIES, spawn_download_workers};
 use super::{CoordinatorError, Session, calculate_downloaded, uses_range_workers};
@@ -18,6 +19,7 @@ pub(super) enum FetchInfoKind {
     Start {
         save_path: PathBuf,
         num_chunks: usize,
+        target: TargetMode,
     },
     Resume,
     Restart,
@@ -131,83 +133,48 @@ impl Session {
                 FetchInfoKind::Start {
                     save_path,
                     num_chunks,
+                    target,
                 },
                 Ok(info),
             ) => {
-                let is_dir = save_path.is_dir()
-                    || save_path.extension().is_none()
-                    || save_path.to_string_lossy().ends_with('/')
-                    || save_path.to_string_lossy().ends_with('\\');
-
-                let target = tokio::task::spawn_blocking({
+                let created = tokio::task::spawn_blocking({
                     let save_path = save_path.clone();
                     let info_filename = info.filename.clone();
                     let total_size = info.content_length;
-                    move || {
-                        if is_dir {
-                            create_collision_free(&save_path, &info_filename, total_size)
-                        } else {
-                            let filename = save_path
-                                .file_name()
-                                .and_then(|name| name.to_str())
-                                .unwrap_or(&info_filename)
-                                .to_string();
-                            match Storage::create_new(&save_path, total_size) {
-                                Ok(storage) => Ok((filename, save_path.clone(), storage)),
-                                Err(err) => Err((filename, save_path.clone(), err)),
-                            }
-                        }
-                    }
+                    move || create_target(&save_path, &info_filename, total_size, target)
                 })
                 .await;
 
-                match target {
+                match created {
                     Ok(Ok((filename, path, storage))) => {
-                        self.current_filename = filename;
-                        self.current_path = path;
-                        self.owns_target = true;
-                        let total_size = info.content_length;
-                        let resumable = uses_range_workers(&info);
-                        spawn_download_workers(
-                            self.session_id,
-                            &self.current_url,
-                            &self.client,
-                            &info,
-                            num_chunks,
-                            &storage,
-                            &self.cancel_tx,
-                            &self.worker_tx,
-                            &mut self.active_chunks,
-                            &mut self.worker_handles,
-                        );
-                        self.active_storage = Some(storage);
-                        self.file_info = Some(info);
-                        self.status = DownloadStatus::Downloading;
-
-                        self.publish(total_size, 0, 0, None, resumable);
+                        self.launch_download(info, filename, path, storage, num_chunks);
                     }
-                    Ok(Err((filename, path, err))) => {
-                        self.current_filename = filename;
-                        self.current_path = path;
-                        self.owns_target =
-                            matches!(&err, StorageError::CreatedFileInitialization(_));
-                        let message = match &err {
-                            StorageError::Io(error)
-                                if error.kind() == std::io::ErrorKind::AlreadyExists =>
-                            {
-                                format!(
-                                    "Refusing to overwrite existing file {}. Choose a different path or remove it first: {err}",
-                                    self.current_path.display()
-                                )
-                            }
-                            _ => err.to_string(),
+                    Ok(Err(TargetError::Existing {
+                        filename,
+                        path,
+                        bytes,
+                    })) => {
+                        self.current_filename = filename.clone();
+                        self.current_path = path.clone();
+                        let existing = ExistingFile {
+                            filename,
+                            path,
+                            bytes,
                         };
-                        self.status = DownloadStatus::Failed(message);
-                        self.publish(None, 0, 0, None, false);
+                        self.ask_existing_target(save_path, num_chunks, info, existing)
+                            .await;
                     }
-                    Err(err) => {
+                    Ok(Err(TargetError::Storage {
+                        filename,
+                        path,
+                        source,
+                    })) => {
+                        self.fail_target(filename, path, &source);
+                    }
+                    Err(error) => {
+                        let error = CoordinatorError::StorageTask(error);
                         self.status = DownloadStatus::Failed(format!(
-                            "Could not create download file {}: {err}",
+                            "Could not create download file {}: {error}",
                             self.current_path.display()
                         ));
                         self.publish(None, 0, 0, None, false);
@@ -362,6 +329,58 @@ impl Session {
                 );
             }
         }
+    }
+}
+
+impl Session {
+    /// Writes a prepared target file and starts one worker per chunk.
+    pub(super) fn launch_download(
+        &mut self,
+        info: RemoteFileInfo,
+        filename: String,
+        path: PathBuf,
+        storage: Storage,
+        num_chunks: usize,
+    ) {
+        let total_size = info.content_length;
+        let resumable = uses_range_workers(&info);
+        self.current_filename = filename;
+        self.current_path = path;
+        self.owns_target = true;
+        spawn_download_workers(
+            self.session_id,
+            &self.current_url,
+            &self.client,
+            &info,
+            num_chunks,
+            &storage,
+            &self.cancel_tx,
+            &self.worker_tx,
+            &mut self.active_chunks,
+            &mut self.worker_handles,
+        );
+        self.active_storage = Some(storage);
+        self.file_info = Some(info);
+        self.status = DownloadStatus::Downloading;
+        self.publish(total_size, 0, 0, None, resumable);
+    }
+
+    /// Reports a target file that could not be prepared.
+    pub(super) fn fail_target(&mut self, filename: String, path: PathBuf, source: &StorageError) {
+        self.current_filename = filename;
+        self.current_path = path;
+        self.owns_target = matches!(source, StorageError::CreatedFileInitialization(_));
+        let message = match source {
+            StorageError::Io(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                format!(
+                    "Refusing to overwrite existing file {}. Choose a different path or remove it first: {source}",
+                    self.current_path.display()
+                )
+            }
+            _ => source.to_string(),
+        };
+        self.status = DownloadStatus::Failed(message);
+        self.publish(None, 0, 0, None, false);
     }
 }
 

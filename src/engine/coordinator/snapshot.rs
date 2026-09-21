@@ -92,6 +92,10 @@ impl Session {
             speed_bytes_per_sec,
             eta_seconds,
             resumable,
+            duplicate: self
+                .duplicate
+                .as_ref()
+                .map(|pending| pending.prompt.clone()),
         };
         let _ = self.snapshot_tx.send(snapshot);
     }

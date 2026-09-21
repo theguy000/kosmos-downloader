@@ -4,6 +4,7 @@ import "../fonts/InterVariable.ttf";
 import { AddDownloadDialog } from "add_download_dialog.slint";
 import { DeleteConfirmationDialog } from "delete_confirmation_dialog.slint";
 import { DownloadTable, TableItem } from "download_table.slint";
+import { DuplicateDownloadDialog } from "duplicate_dialog.slint";
 import { ErrorDialog } from "error_dialog.slint";
 import { CategorySidebar } from "sidebar.slint";
 import { ApplicationToolbar } from "toolbar.slint";
@@ -24,6 +25,13 @@ export component MainWindow inherits Window {
     in-out property <float> streams_count: 8;
     in-out property <bool> show_add_dialog: false;
     in-out property <bool> show_delete_dialog: false;
+    in-out property <bool> show_duplicate_dialog: false;
+    in-out property <string> duplicate_url: "";
+    in-out property <string> duplicate_filename: "";
+    in-out property <string> duplicate_existing_size: "";
+    in-out property <bool> duplicate_is_link: true;
+    in-out property <int> duplicate_selected_option: 0;
+    in-out property <bool> duplicate_remember: false;
     in-out property <string> delete_filename: "";
     in-out property <bool> delete_completed_only: false;
     in-out property <bool> delete_target_completed: false;
@@ -59,11 +67,11 @@ export component MainWindow inherits Window {
     }
     out property <bool> active_row_visible: root.has_active_download && root.category_matches(
         root.selected_category, root.active_file_type, root.is_completed);
-    out property <bool> can_resume: root.active_row_visible && root.selected_row == 0 && root.is_paused;
-    out property <bool> can_stop: root.active_row_visible && root.selected_row == 0 && root.is_downloading;
-    out property <bool> can_stop_all: root.has_active_download && root.is_downloading;
-    out property <bool> can_delete_selected: root.active_row_visible && root.selected_row == 0;
-    out property <bool> can_delete_completed: root.has_active_download && root.is_completed;
+    out property <bool> can_resume: !root.show_duplicate_dialog && root.active_row_visible && root.selected_row == 0 && root.is_paused;
+    out property <bool> can_stop: !root.show_duplicate_dialog && root.active_row_visible && root.selected_row == 0 && root.is_downloading;
+    out property <bool> can_stop_all: !root.show_duplicate_dialog && root.has_active_download && root.is_downloading;
+    out property <bool> can_delete_selected: !root.show_duplicate_dialog && root.active_row_visible && root.selected_row == 0;
+    out property <bool> can_delete_completed: !root.show_duplicate_dialog && root.has_active_download && root.is_completed;
     out property <int> total_items: root.sample_downloads.length + (root.has_active_download ? 1 : 0);
 
     in-out property <[TableItem]> sample_downloads: [];
@@ -75,6 +83,8 @@ export component MainWindow inherits Window {
     callback request_delete_completed();
     callback confirm_delete(bool);
     callback dismiss_delete();
+    callback resolve_duplicate(int, bool);
+    callback dismiss_duplicate();
     callback browse_folder();
     callback open_file();
 
@@ -84,6 +94,11 @@ export component MainWindow inherits Window {
         if root.delete_completed_only { toolbar.focus-delete-completed(); }
         else { toolbar.focus-delete-selected(); }
         root.dismiss-delete();
+    }
+
+    public function close-duplicate-dialog() {
+        root.show_duplicate_dialog = false;
+        root.dismiss-duplicate();
     }
 
     VerticalLayout {
@@ -167,6 +182,20 @@ export component MainWindow inherits Window {
         delete-file <=> root.delete-file;
         dismiss => { root.close-delete-dialog(); }
         confirm(delete-file) => { root.confirm-delete(delete-file); }
+    }
+
+    if root.show_duplicate_dialog: DuplicateDownloadDialog {
+        url: root.duplicate_url;
+        filename: root.duplicate_filename;
+        existing_size: root.duplicate_existing_size;
+        is_link_duplicate: root.duplicate_is_link;
+        selected_option <=> root.duplicate_selected_option;
+        remember <=> root.duplicate_remember;
+        dismiss => { root.close-duplicate-dialog(); }
+        confirm(option, remember) => {
+            root.show_duplicate_dialog = false;
+            root.resolve_duplicate(option, remember);
+        }
     }
 
     if root.action_error_message != "" || root.active_error_message != "": ErrorDialog {

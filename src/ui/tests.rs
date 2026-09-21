@@ -593,3 +593,81 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
     }
     Ok(())
 }
+
+#[test]
+fn test_duplicate_prompt_projection_updates_window() -> Result<(), Box<dyn std::error::Error>> {
+    let ui = MainWindow::new()?;
+    assert!(!ui.get_show_duplicate_dialog());
+
+    let mut snap = crate::engine::DownloadSnapshot {
+        session_id: 10,
+        url: "http://example.com/file.zip".into(),
+        filename: "file.zip".into(),
+        status: crate::engine::DownloadStatus::Connecting,
+        duplicate: Some(crate::engine::DuplicatePrompt {
+            session_id: 10,
+            url: "http://example.com/file.zip".into(),
+            filename: "file.zip".into(),
+            existing_bytes: Some(2048),
+            link_duplicate: false,
+        }),
+        ..Default::default()
+    };
+
+    update_window_state(&ui, &snap);
+    assert!(ui.get_show_duplicate_dialog());
+    assert_eq!(ui.get_duplicate_url(), "http://example.com/file.zip");
+    assert_eq!(ui.get_duplicate_filename(), "file.zip");
+    assert_eq!(ui.get_duplicate_existing_size(), "2.0 KB");
+    assert!(!ui.get_duplicate_is_link());
+    assert_eq!(ui.get_duplicate_selected_option(), 0);
+    assert!(!ui.get_duplicate_remember());
+
+    // User changes option to Numbered (1)
+    ui.set_duplicate_selected_option(1);
+    ui.set_duplicate_remember(true);
+
+    // Another update tick for the same prompt preserves user choice
+    update_window_state(&ui, &snap);
+    assert_eq!(ui.get_duplicate_selected_option(), 1);
+    assert!(ui.get_duplicate_remember());
+
+    // Prompt cleared
+    snap.duplicate = None;
+    update_window_state(&ui, &snap);
+    assert!(!ui.get_show_duplicate_dialog());
+
+    // Adversarial verification: send_action channel capacity saturation
+    let (tx, _rx) = tokio::sync::mpsc::channel(32);
+    for _ in 0..32 {
+        let ok = send_action(
+            &ui,
+            &tx,
+            crate::engine::DownloadAction::ResolveDuplicate {
+                session_id: 1,
+                choice: None,
+            },
+        );
+        assert!(ok);
+        assert_eq!(ui.get_action_error_message(), "");
+    }
+    // 33rd action fails due to TrySendError::Full
+    let ok_33 = send_action(
+        &ui,
+        &tx,
+        crate::engine::DownloadAction::ResolveDuplicate {
+            session_id: 1,
+            choice: None,
+        },
+    );
+    assert!(
+        !ok_33,
+        "Expected 33rd action to fail due to channel capacity"
+    );
+    assert_eq!(
+        ui.get_action_error_message(),
+        "Download engine is busy. Try the action again."
+    );
+
+    Ok(())
+}

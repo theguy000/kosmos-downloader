@@ -273,10 +273,73 @@ export component DialogCheckBox inherits Rectangle {
     }
 }
 
+export component DialogRadioButton inherits Rectangle {
+    in-out property <bool> selected: false;
+    in property <string> text;
+    out property <bool> has_keyboard_focus: focus.has-focus;
+    callback clicked();
+    public function take-focus() { focus.focus(); }
+
+    height: 26px;
+    background: touch.pressed ? #2b2b30 : (touch.has-hover ? #27272a : transparent);
+    forward-focus: focus;
+    accessible-role: radio-button;
+    accessible-label: root.text;
+    accessible-enabled: true;
+    accessible-checked <=> root.selected;
+    accessible-action-default => { root.clicked(); }
+
+    Rectangle {
+        x: 2px;
+        y: (parent.height - self.height) / 2;
+        width: 16px;
+        height: 16px;
+        background: #2b2b30;
+        border-width: 1px;
+        border-color: root.selected ? (focus.has-focus ? #a7bfe2 : #8ba9d6) : (focus.has-focus ? #a1a1aa : #71717a);
+
+        if root.selected: Rectangle {
+            x: 4px;
+            y: 4px;
+            width: 8px;
+            height: 8px;
+            background: #8ba9d6;
+        }
+    }
+
+    Text {
+        x: 26px;
+        width: parent.width - self.x;
+        height: parent.height;
+        text: root.text;
+        font-size: 12px;
+        color: #d4d4d8;
+        vertical-alignment: center;
+    }
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            focus.focus();
+            root.clicked();
+        }
+    }
+}
+
 export component DialogInput inherits Rectangle {
     in-out property <string> text;
     in property <string> placeholder-text;
     in property <string> label;
+    in property <bool> read-only: false;
     private property <length> menu-x;
     private property <length> menu-y;
     private property <int> menu-index: -1;
@@ -328,6 +391,7 @@ export component DialogInput inherits Rectangle {
         input := TextInput {
             private property <length> computed-x;
 
+            read-only: root.read-only;
             x: min(12px, max(parent.width - 12px - self.width - self.text-cursor-width, self.computed-x));
             width: max(parent.width - 24px - self.text-cursor-width, self.preferred-width);
             height: parent.height;

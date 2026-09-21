@@ -5,7 +5,9 @@ use crate::support::http::{
 use crate::support::mock_server::{
     start_mock_server, start_mock_server_with_head_delay, start_non_range_mock_server,
 };
-use kosmos_downloader::engine::{DownloadAction, DownloadEngine, DownloadSnapshot, DownloadStatus};
+use kosmos_downloader::engine::{
+    DownloadAction, DownloadEngine, DownloadSnapshot, DownloadStatus, DuplicateChoice,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -30,44 +32,37 @@ async fn assert_existing_target_is_preserved(save_path: PathBuf, target_path: Pa
         .await
         .unwrap();
 
+    let prompt_snap = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(3),
+        "Existing target did not emit a duplicate prompt",
+        |snap| snap.duplicate.is_some(),
+    )
+    .await;
+
+    let prompt = prompt_snap.duplicate.unwrap();
+    assert!(!prompt.link_duplicate);
+    assert_eq!(prompt.existing_bytes, Some(original.len() as u64));
+
+    // Rejecting the prompt skips the duplicate and returns engine to Idle
+    action_tx
+        .send(DownloadAction::ResolveDuplicate {
+            session_id: prompt.session_id,
+            choice: None,
+        })
+        .await
+        .unwrap();
+
     let terminal = wait_for_snapshot(
         &mut snapshot_rx,
         Duration::from_secs(3),
-        "Existing target did not reach a terminal state",
-        |snap| {
-            matches!(
-                snap.status,
-                DownloadStatus::Completed | DownloadStatus::Failed(_)
-            )
-        },
+        "Engine did not return to Idle after rejecting duplicate",
+        |snap| snap.status == DownloadStatus::Idle && snap.duplicate.is_none(),
     )
     .await;
 
-    match &terminal.status {
-        DownloadStatus::Failed(message) => assert!(
-            message.contains("Refusing to overwrite existing file"),
-            "Expected no-clobber error, got: {message}"
-        ),
-        DownloadStatus::Completed => {
-            panic!("Engine must not report completion for an existing target")
-        }
-        status => panic!("Expected a terminal download state, got {status:?}"),
-    }
     assert_eq!(std::fs::read(&target_path).unwrap(), original);
-    assert_eq!(terminal.save_path, target_path);
-
-    action_tx
-        .send(removal_action(&terminal, true, false))
-        .await
-        .unwrap();
-    wait_for_snapshot(
-        &mut snapshot_rx,
-        Duration::from_secs(1),
-        "Removing a failed preexisting target did not clear its row",
-        |snapshot| snapshot.status == DownloadStatus::Idle,
-    )
-    .await;
-    assert_eq!(std::fs::read(&target_path).unwrap(), original);
+    assert_eq!(terminal.status, DownloadStatus::Idle);
 }
 
 static NEXT_REMOVAL_TEST: AtomicUsize = AtomicUsize::new(0);
@@ -268,7 +263,7 @@ async fn test_existing_directory_target_is_not_overwritten() {
     let payload = generate_test_payload();
     let server_addr = start_mock_server(payload.clone()).await;
 
-    // First download: payload.bin exists, should auto-rename to payload_1.bin
+    // First download: payload.bin exists, should prompt; choosing Numbered saves payload_1.bin
     let engine = DownloadEngine::new();
     let action_tx = engine.action_tx();
     let mut snapshot_rx = engine.snapshot_rx();
@@ -282,10 +277,26 @@ async fn test_existing_directory_target_is_not_overwritten() {
         .await
         .unwrap();
 
+    let prompt_1 = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(3),
+        "First download did not prompt for existing target",
+        |snap| snap.duplicate.is_some(),
+    )
+    .await;
+
+    action_tx
+        .send(DownloadAction::ResolveDuplicate {
+            session_id: prompt_1.duplicate.unwrap().session_id,
+            choice: Some(DuplicateChoice::Numbered),
+        })
+        .await
+        .unwrap();
+
     let completed_1 = wait_for_snapshot(
         &mut snapshot_rx,
         Duration::from_secs(5),
-        "First auto-renamed download did not complete",
+        "First numbered download did not complete",
         |snap| snap.status == DownloadStatus::Completed,
     )
     .await;
@@ -296,7 +307,7 @@ async fn test_existing_directory_target_is_not_overwritten() {
     assert_eq!(std::fs::read(&target_path).unwrap(), original);
     assert_eq!(std::fs::read(&target_1).unwrap(), payload);
 
-    // Second download: payload.bin and payload_1.bin exist, should auto-rename to payload_2.bin
+    // Second download: payload.bin and payload_1.bin exist, prompts; choosing Numbered saves payload_2.bin
     action_tx
         .send(DownloadAction::Start {
             url: format!("http://{server_addr}/payload.bin"),
@@ -306,10 +317,26 @@ async fn test_existing_directory_target_is_not_overwritten() {
         .await
         .unwrap();
 
+    let prompt_2 = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(3),
+        "Second download did not prompt for existing target",
+        |snap| snap.duplicate.is_some(),
+    )
+    .await;
+
+    action_tx
+        .send(DownloadAction::ResolveDuplicate {
+            session_id: prompt_2.duplicate.unwrap().session_id,
+            choice: Some(DuplicateChoice::Numbered),
+        })
+        .await
+        .unwrap();
+
     let completed_2 = wait_for_snapshot(
         &mut snapshot_rx,
         Duration::from_secs(5),
-        "Second auto-renamed download did not complete",
+        "Second numbered download did not complete",
         |snap| snap.session_id > completed_1.session_id && snap.status == DownloadStatus::Completed,
     )
     .await;

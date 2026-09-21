@@ -1,4 +1,5 @@
 mod actions;
+mod duplicate;
 mod lifecycle;
 mod metadata;
 mod progress;
@@ -8,10 +9,11 @@ mod snapshot;
 #[cfg(test)]
 mod tests;
 
-use super::model::{DownloadAction, DownloadSnapshot, DownloadStatus};
+use super::model::{DownloadAction, DownloadSnapshot, DownloadStatus, DuplicateChoice};
 use super::worker::{WorkerError, WorkerMsg};
 use crate::client::{HttpClient, RemoteFileInfo};
 use crate::storage::{Storage, StorageError};
+use duplicate::PendingDuplicate;
 use metadata::FetchInfoMsg;
 use scheduler::{ActiveChunk, MAX_CHUNK_RETRIES};
 use std::cell::LazyCell;
@@ -93,6 +95,8 @@ struct Session {
     info_handle: Option<JoinHandle<()>>,
     restart_required: bool,
     content_restarts: u8,
+    duplicate: Option<PendingDuplicate>,
+    duplicate_preference: Option<DuplicateChoice>,
     worker_tx: mpsc::Sender<WorkerMsg>,
     worker_rx: mpsc::Receiver<WorkerMsg>,
     info_tx: mpsc::Sender<FetchInfoMsg>,
@@ -100,6 +104,45 @@ struct Session {
     last_tick: Instant,
     bytes_since_last_tick: u64,
     current_speed: u64,
+}
+
+impl Session {
+    fn new(
+        worker_tx: mpsc::Sender<WorkerMsg>,
+        worker_rx: mpsc::Receiver<WorkerMsg>,
+        info_tx: mpsc::Sender<FetchInfoMsg>,
+        cancel_tx: watch::Sender<bool>,
+        snapshot_tx: watch::Sender<DownloadSnapshot>,
+    ) -> Self {
+        Self {
+            // Defer HTTP/TLS setup until the first download, then keep connection pooling.
+            client: LazyCell::new(HttpClient::new),
+            session_id: 0,
+            current_url: String::new(),
+            current_filename: String::new(),
+            current_path: PathBuf::new(),
+            current_num_chunks: 1,
+            status: DownloadStatus::Idle,
+            file_info: None,
+            active_storage: None,
+            owns_target: false,
+            active_chunks: Vec::new(),
+            worker_handles: Vec::new(),
+            info_handle: None,
+            restart_required: false,
+            content_restarts: 0,
+            duplicate: None,
+            duplicate_preference: None,
+            worker_tx,
+            worker_rx,
+            info_tx,
+            cancel_tx,
+            snapshot_tx,
+            last_tick: Instant::now(),
+            bytes_since_last_tick: 0,
+            current_speed: 0,
+        }
+    }
 }
 
 // Byte samples mitigate changing sources without claiming full-file identity.
@@ -118,32 +161,7 @@ async fn run_coordinator(
     let (worker_tx, worker_rx) = mpsc::channel(256);
     let (info_tx, mut info_rx) = mpsc::channel(8);
     let (cancel_tx, _) = watch::channel(false);
-    let mut session = Session {
-        // Defer HTTP/TLS setup until the first download, then keep connection pooling.
-        client: LazyCell::new(HttpClient::new),
-        session_id: 0,
-        current_url: String::new(),
-        current_filename: String::new(),
-        current_path: PathBuf::new(),
-        current_num_chunks: 1,
-        status: DownloadStatus::Idle,
-        file_info: None,
-        active_storage: None,
-        owns_target: false,
-        active_chunks: Vec::new(),
-        worker_handles: Vec::new(),
-        info_handle: None,
-        restart_required: false,
-        content_restarts: 0,
-        worker_tx,
-        worker_rx,
-        info_tx,
-        cancel_tx,
-        snapshot_tx,
-        last_tick: Instant::now(),
-        bytes_since_last_tick: 0,
-        current_speed: 0,
-    };
+    let mut session = Session::new(worker_tx, worker_rx, info_tx, cancel_tx, snapshot_tx);
     let mut tick_interval = tokio::time::interval(Duration::from_millis(200));
 
     loop {

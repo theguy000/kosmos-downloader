@@ -102,4 +102,20 @@ pub(super) fn update_window_state(window: &MainWindow, snap: &DownloadSnapshot) 
     };
     window.set_active_size(size_str.into());
     window.set_active_time_left(format_eta(snap.eta_seconds).into());
+
+    if let Some(ref prompt) = snap.duplicate {
+        if !window.get_show_duplicate_dialog() {
+            window.set_duplicate_selected_option(0);
+            window.set_duplicate_remember(false);
+            window.set_show_add_dialog(false);
+            window.set_show_duplicate_dialog(true);
+        }
+        window.set_duplicate_url(prompt.url.clone().into());
+        window.set_duplicate_filename(prompt.filename.clone().into());
+        window.set_duplicate_is_link(prompt.link_duplicate);
+        let size_str = prompt.existing_bytes.map(format_bytes).unwrap_or_default();
+        window.set_duplicate_existing_size(size_str.into());
+    } else if window.get_show_duplicate_dialog() {
+        window.set_show_duplicate_dialog(false);
+    }
 }

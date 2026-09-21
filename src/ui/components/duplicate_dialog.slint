@@ -1,0 +1,199 @@
+import { DialogCheckBox, DialogInput, DialogRadioButton, PointerButton } from "controls.slint";
+
+export component DuplicateDownloadDialog inherits Rectangle {
+    in property <string> url: "";
+    in property <string> filename: "";
+    in property <string> existing_size: "";
+    in property <bool> is_link_duplicate: true;
+    in-out property <int> selected_option: 0;
+    in-out property <bool> remember: false;
+
+    private property <int> focus_index: radio_0.has-keyboard-focus ? 0
+        : (radio_1.has-keyboard-focus ? 1
+        : (radio_2.has-keyboard-focus ? 2
+        : (ok_button.has-keyboard-focus ? 3
+        : (cancel_button.has-keyboard-focus ? 4
+        : (remember_box.has-keyboard-focus ? 5 : 3)))));
+
+    callback dismiss();
+    callback confirm(int, bool);
+
+    function focus-item(index: int) {
+        if index == 0 { radio_0.take-focus(); }
+        else if index == 1 { radio_1.take-focus(); }
+        else if index == 2 { radio_2.take-focus(); }
+        else if index == 3 { ok_button.take-focus(); }
+        else if index == 4 { cancel_button.take-focus(); }
+        else { remember_box.take-focus(); }
+    }
+
+    background: #000000bb;
+    forward-focus: dialog_focus;
+    init => { root.focus-item(3); }
+
+    TouchArea {}
+
+    dialog_focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.dismiss();
+                return accept;
+            }
+            if event.text == Key.Tab {
+                root.focus-item(event.modifiers.shift
+                    ? (root.focus_index == 0 ? 5 : root.focus_index - 1)
+                    : mod(root.focus_index + 1, 6));
+                return accept;
+            }
+            if event.text == Key.UpArrow {
+                root.selected_option = max(0, root.selected_option - 1);
+                if root.focus_index <= 2 {
+                    root.focus-item(root.selected_option);
+                }
+                return accept;
+            }
+            if event.text == Key.DownArrow {
+                root.selected_option = min(2, root.selected_option + 1);
+                if root.focus_index <= 2 {
+                    root.focus-item(root.selected_option);
+                }
+                return accept;
+            }
+            if event.text == Key.Return {
+                if root.focus_index == 4 {
+                    root.dismiss();
+                } else {
+                    root.confirm(root.selected_option, root.remember);
+                }
+                return accept;
+            }
+            if event.text == " " {
+                if root.focus_index == 0 {
+                    root.selected_option = 0;
+                } else if root.focus_index == 1 {
+                    root.selected_option = 1;
+                } else if root.focus_index == 2 {
+                    root.selected_option = 2;
+                } else if root.focus_index == 3 {
+                    root.confirm(root.selected_option, root.remember);
+                } else if root.focus_index == 4 {
+                    root.dismiss();
+                } else if root.focus_index == 5 {
+                    root.remember = !root.remember;
+                }
+                return accept;
+            }
+            return reject;
+        }
+
+        Rectangle {
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            width: 500px;
+            height: 356px;
+            background: #1f1f23;
+            accessible-role: groupbox;
+            accessible-label: "Duplicate download link";
+
+            VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+
+                // Title row
+                HorizontalLayout {
+                    height: 22px;
+                    Text {
+                        text: "Duplicate download link";
+                        font-size: 14px;
+                        font-weight: 600;
+                        color: #f4f4f5;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {}
+                    TouchArea {
+                        width: 22px;
+                        height: 22px;
+                        mouse-cursor: pointer;
+                        clicked => { root.dismiss(); }
+                        Text {
+                            text: "✕";
+                            font-size: 12px;
+                            color: parent.has-hover ? #f4f4f5 : #a1a1aa;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // URL input / display
+                DialogInput {
+                    text: root.url;
+                    read-only: true;
+                    label: "URL";
+                }
+
+                // Informational text
+                Text {
+                    text: root.is_link_duplicate
+                        ? "This file already exists in your download list. You may choose one of the following options, or press Cancel button to skip the download of this file"
+                        : (root.existing_size != ""
+                            ? "This file already exists on disk (" + root.existing_size + "). You may choose one of the following options, or press Cancel button to skip the download of this file"
+                            : "This file already exists on disk. You may choose one of the following options, or press Cancel button to skip the download of this file");
+                    font-size: 12px;
+                    color: #d4d4d8;
+                    wrap: word-wrap;
+                }
+
+                // Radio options
+                VerticalLayout {
+                    spacing: 4px;
+
+                    radio_0 := DialogRadioButton {
+                        text: "If existing file is complete, show download complete dialog; otherwise resume it.";
+                        selected: root.selected_option == 0;
+                        clicked => { root.selected_option = 0; }
+                    }
+
+                    radio_1 := DialogRadioButton {
+                        text: "Add the duplicate with a numbered file name";
+                        selected: root.selected_option == 1;
+                        clicked => { root.selected_option = 1; }
+                    }
+
+                    radio_2 := DialogRadioButton {
+                        text: "Add the duplicate and overwrite the existing file";
+                        selected: root.selected_option == 2;
+                        clicked => { root.selected_option = 2; }
+                    }
+                }
+
+                Rectangle { height: 4px; }
+
+                // Action buttons
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 12px;
+
+                    ok_button := PointerButton {
+                        text: "OK";
+                        primary: root.selected_option != 2;
+                        danger: root.selected_option == 2;
+                        clicked => { root.confirm(root.selected_option, root.remember); }
+                    }
+
+                    cancel_button := PointerButton {
+                        text: "Cancel";
+                        clicked => { root.dismiss(); }
+                    }
+                }
+
+                // Remember selection checkbox
+                remember_box := DialogCheckBox {
+                    height: 40px;
+                    checked <=> root.remember;
+                    text: "Remember my selection and don't show this dialog again for the rest of this session.";
+                }
+            }
+        }
+    }
+}

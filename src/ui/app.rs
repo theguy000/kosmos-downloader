@@ -1,7 +1,7 @@
 use super::platform::{default_download_directory, open_file};
 use super::projection::{should_project_snapshot, update_window_state};
 use super::view::MainWindow;
-use crate::engine::{DownloadAction, DownloadSnapshot, DownloadStatus};
+use crate::engine::{DownloadAction, DownloadSnapshot, DownloadStatus, DuplicateChoice};
 use slint::ComponentHandle;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -183,6 +183,69 @@ pub fn run_app(
                 window.set_active_error_message("".into());
                 window.invoke_close_delete_dialog();
             }
+        });
+    }
+
+    {
+        let tx = action_tx.clone();
+        let rx = snapshot_rx.clone();
+        let window_weak = main_window.as_weak();
+        main_window.on_resolve_duplicate(move |option, remember| {
+            let Some(window) = window_weak.upgrade() else {
+                return;
+            };
+            let snap = rx.borrow();
+            let Some(ref prompt) = snap.duplicate else {
+                return;
+            };
+            let session_id = prompt.session_id;
+            let choice = match option {
+                0 => DuplicateChoice::UseExisting,
+                1 => DuplicateChoice::Numbered,
+                2 => DuplicateChoice::Overwrite,
+                _ => DuplicateChoice::UseExisting,
+            };
+            if remember {
+                send_action(
+                    &window,
+                    &tx,
+                    DownloadAction::SetDuplicatePreference {
+                        choice: Some(choice),
+                    },
+                );
+            }
+            send_action(
+                &window,
+                &tx,
+                DownloadAction::ResolveDuplicate {
+                    session_id,
+                    choice: Some(choice),
+                },
+            );
+        });
+    }
+
+    {
+        let tx = action_tx.clone();
+        let rx = snapshot_rx.clone();
+        let window_weak = main_window.as_weak();
+        main_window.on_dismiss_duplicate(move || {
+            let Some(window) = window_weak.upgrade() else {
+                return;
+            };
+            let snap = rx.borrow();
+            let Some(ref prompt) = snap.duplicate else {
+                return;
+            };
+            let session_id = prompt.session_id;
+            send_action(
+                &window,
+                &tx,
+                DownloadAction::ResolveDuplicate {
+                    session_id,
+                    choice: None,
+                },
+            );
         });
     }
 

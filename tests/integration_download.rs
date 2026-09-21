@@ -3,6 +3,8 @@ mod support;
 
 #[path = "integration_download/client_metadata.rs"]
 mod client_metadata;
+#[path = "integration_download/duplicate.rs"]
+mod duplicate;
 #[path = "integration_download/lifecycle.rs"]
 mod lifecycle;
 #[path = "integration_download/resume_integrity.rs"]
