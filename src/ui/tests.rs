@@ -392,6 +392,15 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         click(166.0, 50.0);
         assert_eq!(stopped.get(), 3);
 
+        snapshot.status = DownloadStatus::Paused;
+        update_window_state(&ui, &snapshot);
+        render();
+        assert!(ui.get_can_resume());
+        assert!(!ui.get_can_stop_all());
+        assert_eq!(ui.get_active_status(), "Stopped");
+        window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+        assert_eq!(stopped.get(), 3, "A disabled Stop ignores keyboard input");
+
         assert!(ui.get_can_delete_selected());
         assert!(!ui.get_can_delete_completed());
         click(298.0, 50.0);
@@ -479,18 +488,10 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
             ui.get_show_delete_dialog(),
             "Escape restores focus to the requesting toolbar action"
         );
+        render();
         window.dispatch_event(WindowEvent::KeyPressed {
             text: slint::platform::Key::Escape.into(),
         });
-
-        snapshot.status = DownloadStatus::Paused;
-        update_window_state(&ui, &snapshot);
-        render();
-        assert!(ui.get_can_resume());
-        assert!(!ui.get_can_stop_all());
-        assert_eq!(ui.get_active_status(), "Stopped");
-        window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
-        assert_eq!(stopped.get(), 3, "A disabled Stop ignores keyboard input");
         ui.set_selected_row(1);
         click(102.0, 50.0);
         assert_eq!(resumed.get(), 0, "Resume cannot target another row");
@@ -562,6 +563,7 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         assert!(ui.get_show_delete_dialog());
         assert!(ui.get_delete_completed_only());
         assert!(!ui.get_delete_file());
+        render();
         window.dispatch_event(WindowEvent::KeyPressed {
             text: slint::platform::Key::Escape.into(),
         });

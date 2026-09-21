@@ -260,9 +260,83 @@ async fn test_existing_directory_target_is_not_overwritten() {
     ));
     let _ = std::fs::remove_dir_all(&save_dir);
     std::fs::create_dir_all(&save_dir).unwrap();
-    let target_path = save_dir.join("payload.bin");
 
-    assert_existing_target_is_preserved(save_dir.clone(), target_path).await;
+    let target_path = save_dir.join("payload.bin");
+    let original = b"existing download data".to_vec();
+    std::fs::write(&target_path, &original).unwrap();
+
+    let payload = generate_test_payload();
+    let server_addr = start_mock_server(payload.clone()).await;
+
+    // First download: payload.bin exists, should auto-rename to payload_1.bin
+    let engine = DownloadEngine::new();
+    let action_tx = engine.action_tx();
+    let mut snapshot_rx = engine.snapshot_rx();
+
+    action_tx
+        .send(DownloadAction::Start {
+            url: format!("http://{server_addr}/payload.bin"),
+            save_path: save_dir.clone(),
+            num_chunks: 2,
+        })
+        .await
+        .unwrap();
+
+    let completed_1 = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(5),
+        "First auto-renamed download did not complete",
+        |snap| snap.status == DownloadStatus::Completed,
+    )
+    .await;
+
+    let target_1 = save_dir.join("payload_1.bin");
+    assert_eq!(completed_1.filename, "payload_1.bin");
+    assert_eq!(completed_1.save_path, target_1);
+    assert_eq!(std::fs::read(&target_path).unwrap(), original);
+    assert_eq!(std::fs::read(&target_1).unwrap(), payload);
+
+    // Second download: payload.bin and payload_1.bin exist, should auto-rename to payload_2.bin
+    action_tx
+        .send(DownloadAction::Start {
+            url: format!("http://{server_addr}/payload.bin"),
+            save_path: save_dir.clone(),
+            num_chunks: 2,
+        })
+        .await
+        .unwrap();
+
+    let completed_2 = wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(5),
+        "Second auto-renamed download did not complete",
+        |snap| snap.session_id > completed_1.session_id && snap.status == DownloadStatus::Completed,
+    )
+    .await;
+
+    let target_2 = save_dir.join("payload_2.bin");
+    assert_eq!(completed_2.filename, "payload_2.bin");
+    assert_eq!(completed_2.save_path, target_2);
+    assert_eq!(std::fs::read(&target_path).unwrap(), original);
+    assert_eq!(std::fs::read(&target_1).unwrap(), payload);
+    assert_eq!(std::fs::read(&target_2).unwrap(), payload);
+
+    // Deleting payload_2 with delete_file: true removes payload_2, preserving payload and payload_1
+    action_tx
+        .send(removal_action(&completed_2, true, false))
+        .await
+        .unwrap();
+    wait_for_snapshot(
+        &mut snapshot_rx,
+        Duration::from_secs(2),
+        "Removal did not clear row",
+        |snap| snap.status == DownloadStatus::Idle,
+    )
+    .await;
+
+    assert!(!target_2.exists());
+    assert_eq!(std::fs::read(&target_path).unwrap(), original);
+    assert_eq!(std::fs::read(&target_1).unwrap(), payload);
 
     let _ = std::fs::remove_dir_all(&save_dir);
 }

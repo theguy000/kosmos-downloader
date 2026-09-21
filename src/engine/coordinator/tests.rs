@@ -154,3 +154,52 @@ fn dynamic_partitions_preserve_progress_and_resume_coverage() {
     assert!(chunks[2].range.start < chunks[1].range.start);
     assert!(resume_chunks_are_valid(&chunks, total));
 }
+
+#[test]
+fn test_next_numbered_filename() {
+    use super::metadata::next_numbered_filename;
+
+    assert_eq!(
+        next_numbered_filename("windowsdesktop-runtime-8.0.31-win-x64.exe", 1),
+        "windowsdesktop-runtime-8.0.31-win-x64_1.exe"
+    );
+    assert_eq!(
+        next_numbered_filename("windowsdesktop-runtime-8.0.31-win-x64.exe", 2),
+        "windowsdesktop-runtime-8.0.31-win-x64_2.exe"
+    );
+    assert_eq!(next_numbered_filename("report_1.pdf", 1), "report_1_1.pdf");
+    assert_eq!(next_numbered_filename("report_1.pdf", 2), "report_1_2.pdf");
+    assert_eq!(next_numbered_filename("track_01.mp3", 1), "track_01_1.mp3");
+    assert_eq!(
+        next_numbered_filename("archive.tar.gz", 1),
+        "archive.tar_1.gz"
+    );
+    assert_eq!(next_numbered_filename("README", 1), "README_1");
+}
+
+#[test]
+fn collision_free_creation_returns_the_candidate_path() {
+    use super::metadata::create_collision_free;
+
+    let dir = std::env::temp_dir().join(format!(
+        "kosmos-collision-{}-{:?}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    for name in ["report.pdf", "report_1.pdf", "report_2.pdf"] {
+        std::fs::write(dir.join(name), b"").expect("seed existing file");
+    }
+
+    let result = create_collision_free(&dir, "report.pdf", None);
+
+    let (name, path, storage) = result.expect("collision-free creation should succeed");
+    assert_eq!(name, "report_3.pdf");
+    assert_eq!(path, dir.join("report_3.pdf"));
+    assert!(path.exists());
+    drop(storage);
+    let _ = std::fs::remove_dir_all(&dir);
+}

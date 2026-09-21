@@ -5,10 +5,14 @@ use crate::client::{HttpClient, RemoteFileInfo, is_strong_etag};
 use crate::engine::model::DownloadStatus;
 use crate::engine::worker::WorkerError;
 use crate::storage::{Storage, StorageError};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
+
+/// Upper bound on automatic `name_N` collision renames before failing.
+/// ponytail: circuit breaker; a normal filesystem finds a free name on the first try.
+const MAX_AUTO_RENAME_ATTEMPTS: u32 = 10_000;
 
 pub(super) enum FetchInfoKind {
     Start {
@@ -135,49 +139,32 @@ impl Session {
                     || save_path.to_string_lossy().ends_with('/')
                     || save_path.to_string_lossy().ends_with('\\');
 
-                if is_dir {
-                    self.current_filename = info.filename.clone();
-                    self.current_path = save_path.join(&self.current_filename);
-                } else {
-                    self.current_filename = save_path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or(&info.filename)
-                        .to_string();
-                    self.current_path = save_path;
-                }
-
-                let storage = match tokio::task::spawn_blocking({
-                    let path = self.current_path.clone();
+                let target = tokio::task::spawn_blocking({
+                    let save_path = save_path.clone();
+                    let info_filename = info.filename.clone();
                     let total_size = info.content_length;
-                    move || Storage::create_new(&path, total_size)
-                })
-                .await
-                {
-                    Ok(Ok(storage)) => Ok(storage),
-                    Ok(Err(err)) => {
-                        self.owns_target =
-                            matches!(&err, StorageError::CreatedFileInitialization(_));
-                        Err(match &err {
-                            StorageError::Io(error)
-                                if error.kind() == std::io::ErrorKind::AlreadyExists =>
-                            {
-                                format!(
-                                    "Refusing to overwrite existing file {}. Choose a different path or remove it first: {err}",
-                                    self.current_path.display()
-                                )
+                    move || {
+                        if is_dir {
+                            create_collision_free(&save_path, &info_filename, total_size)
+                        } else {
+                            let filename = save_path
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .unwrap_or(&info_filename)
+                                .to_string();
+                            match Storage::create_new(&save_path, total_size) {
+                                Ok(storage) => Ok((filename, save_path.clone(), storage)),
+                                Err(err) => Err((filename, save_path.clone(), err)),
                             }
-                            _ => err.to_string(),
-                        })
+                        }
                     }
-                    Err(err) => Err(format!(
-                        "Could not create download file {}: {err}",
-                        self.current_path.display()
-                    )),
-                };
+                })
+                .await;
 
-                match storage {
-                    Ok(storage) => {
+                match target {
+                    Ok(Ok((filename, path, storage))) => {
+                        self.current_filename = filename;
+                        self.current_path = path;
                         self.owns_target = true;
                         let total_size = info.content_length;
                         let resumable = uses_range_workers(&info);
@@ -199,8 +186,30 @@ impl Session {
 
                         self.publish(total_size, 0, 0, None, resumable);
                     }
-                    Err(message) => {
+                    Ok(Err((filename, path, err))) => {
+                        self.current_filename = filename;
+                        self.current_path = path;
+                        self.owns_target =
+                            matches!(&err, StorageError::CreatedFileInitialization(_));
+                        let message = match &err {
+                            StorageError::Io(error)
+                                if error.kind() == std::io::ErrorKind::AlreadyExists =>
+                            {
+                                format!(
+                                    "Refusing to overwrite existing file {}. Choose a different path or remove it first: {err}",
+                                    self.current_path.display()
+                                )
+                            }
+                            _ => err.to_string(),
+                        };
                         self.status = DownloadStatus::Failed(message);
+                        self.publish(None, 0, 0, None, false);
+                    }
+                    Err(err) => {
+                        self.status = DownloadStatus::Failed(format!(
+                            "Could not create download file {}: {err}",
+                            self.current_path.display()
+                        ));
                         self.publish(None, 0, 0, None, false);
                     }
                 }
@@ -353,5 +362,48 @@ impl Session {
                 );
             }
         }
+    }
+}
+
+pub(super) fn create_collision_free(
+    save_path: &Path,
+    info_filename: &str,
+    total_size: Option<u64>,
+) -> Result<(String, PathBuf, Storage), (String, PathBuf, StorageError)> {
+    let mut candidate_name = info_filename.to_string();
+    let mut candidate_path = save_path.join(&candidate_name);
+    let mut index = 0;
+    loop {
+        if index > 0 {
+            candidate_name = next_numbered_filename(info_filename, index);
+            candidate_path = save_path.join(&candidate_name);
+        }
+        match Storage::create_new(&candidate_path, total_size) {
+            Ok(storage) => return Ok((candidate_name, candidate_path, storage)),
+            Err(StorageError::Io(err)) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                index += 1;
+                if index >= MAX_AUTO_RENAME_ATTEMPTS {
+                    let err = std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        format!("no available filename after {MAX_AUTO_RENAME_ATTEMPTS} attempts"),
+                    );
+                    return Err((candidate_name, candidate_path, StorageError::Io(err)));
+                }
+            }
+            Err(err) => return Err((candidate_name, candidate_path, err)),
+        }
+    }
+}
+
+pub(super) fn next_numbered_filename(original_name: &str, index: u32) -> String {
+    let path = Path::new(original_name);
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(original_name);
+    let ext = path.extension().and_then(|e| e.to_str());
+    match ext {
+        Some(ext) => format!("{stem}_{index}.{ext}"),
+        None => format!("{stem}_{index}"),
     }
 }

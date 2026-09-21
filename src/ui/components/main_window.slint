@@ -160,7 +160,7 @@ export component MainWindow inherits Window {
         dismiss => { root.show_add_dialog = false; }
     }
 
-    if root.show-delete-dialog: DeleteConfirmationDialog {
+    if root.show-delete-dialog: delete_dialog := DeleteConfirmationDialog {
         filename: root.delete-filename;
         completed-only: root.delete-completed-only;
         target-completed: root.delete-target-completed;
