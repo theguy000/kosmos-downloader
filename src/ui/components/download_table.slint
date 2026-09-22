@@ -123,7 +123,12 @@ export component DownloadTable inherits ScrollView {
     in property <int> selected_category: 0;
     in property <int> total_items: 0;
     in property <[TableItem]> sample_downloads: [];
+    // Rows paint their focus ring only for keyboard input, so a click selects without a ring.
+    private property <bool> keyboard_focused: false;
     callback open_file();
+    callback row_selected(int);
+    /// Moves the selection by one row: -1 for up, 1 for down.
+    callback step_selection(int);
     pure function category_matches(category: int, file_type: string, completed: bool) -> bool {
         return category == 0
             || (category == 1 && file_type == "zip")
@@ -144,6 +149,32 @@ export component DownloadTable inherits ScrollView {
         width: root.content-width;
         height: root.content-height;
         background: #141416;
+
+        // The list is one keyboard stop, so the arrows move the selection through the rows.
+        list_focus := FocusScope {
+            key-pressed(event) => {
+                // Any key here means the keyboard drives the list, so the ring is shown again.
+                root.keyboard_focused = true;
+                if event.text == Key.DownArrow {
+                    root.step_selection(1);
+                    return accept;
+                }
+                if event.text == Key.UpArrow {
+                    root.step_selection(-1);
+                    return accept;
+                }
+                if event.text == Key.Return || event.text == Key.Space {
+                    // Nothing is selected yet: the first press picks the top row instead.
+                    if root.selected_row > 0 {
+                        root.row_selected(root.selected_row);
+                    } else {
+                        root.step_selection(1);
+                    }
+                    return accept;
+                }
+                return reject;
+            }
+        }
     }
 
     VerticalLayout {
@@ -202,12 +233,11 @@ export component DownloadTable inherits ScrollView {
             if root.active_row_visible: Rectangle {
                 height: 25px;
                 background: root.selected_row == 0 ? #273248 : (act_t.has-hover ? #202024 : #18181b);
-                border-width: row_focus.has-focus ? 1px : 0px;
+                border-width: list_focus.has-focus && root.keyboard_focused && root.selected_row == 0 ? 1px : 0px;
                 border-color: FocusStyle.ring;
-                forward-focus: row_focus;
                 accessible-role: button;
                 accessible-label: root.active_filename + ", " + root.active_status;
-                accessible-action-default => { root.selected_row = 0; }
+                accessible-action-default => { root.selected_row = 0; root.row_selected(0); }
 
                 DownloadRowColumns {
                     filename: root.active_filename != "" ? root.active_filename : "New Download";
@@ -221,18 +251,14 @@ export component DownloadTable inherits ScrollView {
                     status-color: root.active_status_color;
                 }
                 Rectangle { y: parent.height - 1px; height: 1px; background: #27272a; }
-                row_focus := FocusScope {
-                    key-pressed(event) => {
-                        if event.text == Key.Space || event.text == Key.Return {
-                            root.selected_row = 0;
-                            return accept;
-                        }
-                        return reject;
-                    }
-                }
                 act_t := TouchArea {
                     mouse-cursor: pointer;
-                    clicked => { row_focus.focus(); root.selected_row = 0; }
+                    clicked => {
+                        root.keyboard_focused = false;
+                        list_focus.focus();
+                        root.selected_row = 0;
+                        root.row_selected(0);
+                    }
                     double-clicked => { if root.is_completed { root.open_file(); } }
                 }
             }
@@ -240,14 +266,30 @@ export component DownloadTable inherits ScrollView {
             for item[idx] in root.sample_downloads: Rectangle {
                 property <bool> is_visible: root.category_matches(
                     root.selected_category, item.file_type, true);
+                // The keyboard marks the selected row, or the first listed row when the table
+                // has no selection yet. A click selects the row without painting the ring.
+                property <bool> is_focused: list_focus.has-focus && root.keyboard_focused
+                    && (root.selected_row == item.id
+                    || (!root.active_row_visible && root.selected_row <= 0 && idx == 0));
 
                 height: self.is_visible ? 25px : 0px;
                 background: root.selected_row == item.id ? #273248 : (s_touch.has-hover ? #202024 : (Math.mod(idx, 2) == 0 ? #141416 : #18181b));
+                border-width: self.is_focused ? 1px : 0px;
+                border-color: FocusStyle.ring;
+                accessible-role: button;
+                accessible-label: item.filename + ", " + item.status_text;
+                accessible-action-default => { root.selected_row = item.id; root.row_selected(item.id); }
 
                 s_touch := TouchArea {
                     enabled: parent.is_visible;
                     mouse-cursor: pointer;
-                    clicked => { root.selected_row = item.id; }
+                    clicked => {
+                        root.keyboard_focused = false;
+                        list_focus.focus();
+                        root.selected_row = item.id;
+                        root.row_selected(item.id);
+                    }
+                    double-clicked => { root.open_file(); }
                 }
 
                 if self.is_visible: DownloadRowColumns {

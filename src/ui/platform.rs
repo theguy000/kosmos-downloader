@@ -1,6 +1,11 @@
 use std::path::{Path, PathBuf};
 
+/// Opens `path` with the system handler, ignoring files that were moved or removed.
 pub(super) fn open_file(path: &Path) {
+    if !path.exists() {
+        return;
+    }
+
     #[cfg(windows)]
     {
         if let Some(path_str) = path.to_str() {

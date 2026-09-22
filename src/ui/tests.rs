@@ -1,8 +1,21 @@
 use super::MainWindow;
-use super::app::{DeleteTarget, send_action};
+use super::app::{DeleteTarget, complete_history_delete, history_delete_failure, send_action};
 use super::platform::default_download_directory;
-use super::projection::{should_project_snapshot, update_window_state};
+use super::projection::{history_table_item, should_project_snapshot, update_window_state};
+use crate::history::{HistoryEntry, HistoryStore, last_try_label};
 use slint::ComponentHandle;
+use std::path::PathBuf;
+
+fn finished_entry(id: i32, filename: &str, total_bytes: u64) -> HistoryEntry {
+    HistoryEntry {
+        id,
+        url: format!("https://example.com/{filename}"),
+        filename: filename.to_string(),
+        save_path: PathBuf::from(filename),
+        total_bytes,
+        completed_unix_ms: 1_700_000_000_000 + id as u64,
+    }
+}
 
 #[test]
 fn snapshot_projection_handles_initial_changed_and_closed_updates() {
@@ -396,8 +409,15 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
         assert_eq!(
             ui.get_selected_row(),
+            1,
+            "Space acts on the row the list has selected"
+        );
+        ui.set_selected_row(0);
+        window.dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+        assert_eq!(
+            ui.get_selected_row(),
             0,
-            "Download selection supports keyboard"
+            "Space keeps the active download selected"
         );
         assert!(ui.get_can_stop());
         click(166.0, 50.0);
@@ -834,6 +854,31 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
             "Escape dismisses the dialog again"
         );
 
+        // Picking a category reports the change, so the selected row is re-checked on the
+        // event instead of polling the category on a timer.
+        let category_changes = Rc::new(std::cell::Cell::new(0));
+        ui.on_selected_category_changed({
+            let category_changes = category_changes.clone();
+            move || category_changes.set(category_changes.get() + 1)
+        });
+        click(100.0, 254.0);
+        assert_eq!(
+            ui.get_selected_category(),
+            5,
+            "\"Video\" is the fifth category row"
+        );
+        click(100.0, 176.0);
+        assert_eq!(
+            ui.get_selected_category(),
+            2,
+            "\"Documents\" is the second category row"
+        );
+        assert_eq!(
+            category_changes.get(),
+            2,
+            "each sidebar pick is reported once"
+        );
+
         for category in 0..10 {
             ui.set_selected_category(category);
             assert_eq!(ui.get_active_row_visible(), matches!(category, 0 | 1 | 7));
@@ -857,7 +902,226 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         assert_eq!(ui.get_total_items(), 1);
         ui.set_has_active_download(false);
     }
+
+    // Listed downloads are shown next to the active row, not instead of it.
+    use slint::Model;
+    let history = std::rc::Rc::new(slint::VecModel::<super::TableItem>::default());
+    ui.set_sample_downloads(history.clone().into());
+    history.push(history_table_item(&finished_entry(1, "file.bin", 1024)));
+    assert_eq!(ui.get_sample_downloads().row_count(), 1);
+    assert_eq!(ui.get_total_items(), 1);
+    ui.set_has_active_download(true);
+    assert_eq!(ui.get_total_items(), 2);
+    ui.set_has_active_download(false);
+
+    // History selection and deletion updates store and window
+    {
+        use super::app::{step_selection, update_selection_state};
+        use crate::history::tests::TempFile;
+
+        let file = TempFile::new("delete-history-test");
+        let mut store = HistoryStore::load_from(file.path().to_path_buf());
+
+        let entry = crate::history::HistoryEntry {
+            id: 1,
+            url: "https://example.com/video.mp4".into(),
+            filename: "video.mp4".into(),
+            save_path: file.path().with_file_name("video.mp4"),
+            total_bytes: 10_000,
+            completed_unix_ms: 1_700_000_000_000,
+        };
+        store.record(entry.clone())?;
+
+        // Create the dummy target file on disk
+        std::fs::write(&entry.save_path, b"dummy data")?;
+        assert!(entry.save_path.exists());
+
+        // Initially nothing selected
+        ui.set_selected_row(-1);
+        update_selection_state(&ui, &store, -1);
+        assert!(!ui.get_history_row_selected());
+        assert!(!ui.get_can_delete_selected());
+
+        // Select row 1 (video.mp4) in All category (0)
+        ui.set_selected_category(0);
+        ui.set_selected_row(1);
+        update_selection_state(&ui, &store, 1);
+        assert!(ui.get_history_row_selected());
+        assert!(
+            ui.get_can_delete_selected(),
+            "delete is enabled for selected history entry"
+        );
+
+        // The list is one keyboard stop: a click puts the keyboard on it, and the arrows ask the
+        // app to move the selection.
+        let second = finished_entry(2, "second.bin", 2_048);
+        store.record(second.clone())?;
+        history.push(history_table_item(&second));
+        let steps = Rc::new(std::cell::RefCell::new(Vec::new()));
+        ui.on_step_selection({
+            let steps = steps.clone();
+            move |step| steps.borrow_mut().push(step)
+        });
+        let selected_requests = Rc::new(std::cell::RefCell::new(Vec::new()));
+        ui.on_row_selected({
+            let selected_requests = selected_requests.clone();
+            move |id| selected_requests.borrow_mut().push(id)
+        });
+        click(300.0, 117.0);
+        assert_eq!(
+            ui.get_selected_row(),
+            1,
+            "the clicked listed row is selected"
+        );
+        assert_eq!(selected_requests.borrow().as_slice(), &[1]);
+
+        // The arrows move the selection and report their direction.
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::DownArrow.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::UpArrow.into(),
+        });
+        assert_eq!(
+            steps.borrow().as_slice(),
+            &[1, -1],
+            "the arrows reach the list with their direction"
+        );
+        ui.set_selected_row(-1);
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Return.into(),
+        });
+        assert_eq!(
+            steps.borrow().as_slice(),
+            &[1, -1, 1],
+            "Return enters the list when nothing is selected"
+        );
+
+        // The app moves the selection through the listed rows, and stops at both ends.
+        step_selection(&ui, &store, 1);
+        assert_eq!(
+            ui.get_selected_row(),
+            1,
+            "the first step picks the top listed row"
+        );
+        step_selection(&ui, &store, 1);
+        assert_eq!(
+            ui.get_selected_row(),
+            2,
+            "the down arrow moves to the next listed row"
+        );
+        assert!(
+            ui.get_history_row_selected(),
+            "a row reached this way can be deleted"
+        );
+        step_selection(&ui, &store, 1);
+        assert_eq!(
+            ui.get_selected_row(),
+            2,
+            "the selection stops at the last listed row"
+        );
+        step_selection(&ui, &store, -1);
+        assert_eq!(
+            ui.get_selected_row(),
+            1,
+            "the up arrow moves back to the previous row"
+        );
+        ui.set_selected_category(5);
+        step_selection(&ui, &store, 1);
+        assert_eq!(
+            ui.get_selected_row(),
+            1,
+            "the arrows skip the rows the category hides"
+        );
+        ui.set_selected_category(0);
+
+        // Change category to Compressed (1) -> video.mp4 does not match
+        ui.set_selected_category(1);
+        update_selection_state(&ui, &store, 1);
+        assert!(!ui.get_history_row_selected());
+        assert!(
+            !ui.get_can_delete_selected(),
+            "delete is disabled when category does not match"
+        );
+
+        // Change category to Video (5) -> video.mp4 matches
+        ui.set_selected_category(5);
+        update_selection_state(&ui, &store, 1);
+        assert!(ui.get_history_row_selected());
+        assert!(ui.get_can_delete_selected());
+
+        // Deleting a listed download drops the file first, then the log entry and the row.
+        let rows_before = ui.get_sample_downloads().row_count();
+        std::fs::remove_file(&entry.save_path)?;
+        complete_history_delete(&ui, &mut store, &history, entry.id, None);
+        assert!(!entry.save_path.exists(), "file is removed from disk");
+        assert!(
+            store.entries().iter().all(|kept| kept.id != entry.id),
+            "the deleted entry is removed from the store"
+        );
+        assert_eq!(
+            ui.get_sample_downloads().row_count(),
+            rows_before - 1,
+            "the listed row is removed"
+        );
+        assert_eq!(ui.get_selected_row(), -1, "the removed row is not selected");
+        assert!(!ui.get_history_row_selected());
+        assert_eq!(ui.get_action_error_message(), "");
+
+        // Reloading store confirms disk file was rewritten
+        let reloaded = HistoryStore::load_from(file.path().to_path_buf());
+        assert!(reloaded.entries().iter().all(|kept| kept.id != entry.id));
+
+        // A file deletion that failed keeps the row and reports why.
+        store.record(entry.clone())?;
+        history.push(history_table_item(&entry));
+        ui.set_selected_row(entry.id);
+        ui.set_history_row_selected(true);
+        ui.set_show_delete_dialog(true);
+        complete_history_delete(
+            &ui,
+            &mut store,
+            &history,
+            entry.id,
+            Some("Could not delete video.mp4: access is denied".to_string()),
+        );
+        assert!(
+            store.entries().iter().any(|kept| kept.id == entry.id),
+            "the entry survives for a retry"
+        );
+        assert_eq!(
+            ui.get_sample_downloads().row_count(),
+            rows_before,
+            "the listed row survives for a retry"
+        );
+        assert_eq!(ui.get_selected_row(), entry.id);
+        assert!(ui.get_history_row_selected());
+        assert_eq!(
+            ui.get_action_error_message(),
+            "Could not delete video.mp4: access is denied",
+            "the failure is reported instead of being swallowed"
+        );
+        assert!(!ui.get_show_delete_dialog());
+    }
+
     Ok(())
+}
+
+#[test]
+fn a_missing_file_counts_as_deleted() {
+    use std::io::{Error, ErrorKind};
+
+    assert!(history_delete_failure(Ok(())).is_none());
+    assert!(
+        history_delete_failure(Err(Error::from(ErrorKind::NotFound))).is_none(),
+        "a file that is already gone is what the user asked for"
+    );
+    assert_eq!(
+        history_delete_failure(Err(Error::from(ErrorKind::PermissionDenied)))
+            .map(|error| error.kind()),
+        Some(ErrorKind::PermissionDenied),
+        "every other failure is reported"
+    );
 }
 
 #[test]
@@ -889,7 +1153,6 @@ fn test_duplicate_prompt_projection_updates_window() -> Result<(), Box<dyn std::
     assert_eq!(ui.get_duplicate_selected_option(), 0);
     assert!(!ui.get_duplicate_remember());
 
-    // User changes option to Numbered (1)
     ui.set_duplicate_selected_option(1);
     ui.set_duplicate_remember(true);
 
@@ -898,7 +1161,6 @@ fn test_duplicate_prompt_projection_updates_window() -> Result<(), Box<dyn std::
     assert_eq!(ui.get_duplicate_selected_option(), 1);
     assert!(ui.get_duplicate_remember());
 
-    // Prompt cleared
     snap.duplicate = None;
     update_window_state(&ui, &snap);
     assert!(!ui.get_show_duplicate_dialog());
@@ -917,7 +1179,6 @@ fn test_duplicate_prompt_projection_updates_window() -> Result<(), Box<dyn std::
         assert!(ok);
         assert_eq!(ui.get_action_error_message(), "");
     }
-    // 33rd action fails due to TrySendError::Full
     let ok_33 = send_action(
         &ui,
         &tx,
@@ -935,5 +1196,219 @@ fn test_duplicate_prompt_projection_updates_window() -> Result<(), Box<dyn std::
         "Download engine is busy. Try the action again."
     );
 
+    snap.downloaded_bytes = 1024;
+    snap.total_bytes = Some(4096);
+    snap.status = crate::engine::DownloadStatus::Downloading;
+    update_window_state(&ui, &snap);
+    assert_eq!(ui.get_active_size(), "1.0 KB / 4.0 KB");
+
+    snap.status = crate::engine::DownloadStatus::Completed;
+    snap.downloaded_bytes = 4096;
+    update_window_state(&ui, &snap);
+    assert_eq!(ui.get_active_size(), "4.0 KB");
+
     Ok(())
+}
+
+#[test]
+fn completed_download_archiving_preserves_history() {
+    use super::TableItem;
+    use slint::Model;
+
+    let history = slint::VecModel::<TableItem>::default();
+    assert_eq!(history.row_count(), 0);
+
+    let first = finished_entry(1, "file.bin", 1024);
+    history.push(history_table_item(&first));
+    assert_eq!(history.row_count(), 1);
+    let listed = history.row_data(0).unwrap();
+    assert_eq!(listed.id, 1, "Row 0 stays reserved for the active download");
+    assert_eq!(listed.filename, "file.bin");
+    assert_eq!(listed.file_type, "doc");
+    assert_eq!(listed.size_text, "1.0 KB");
+    assert_eq!(listed.status_text, "Complete");
+    assert_eq!(listed.time_left_text, "--:--");
+    assert_eq!(listed.transfer_rate_text, "0 KB/s");
+    assert_eq!(
+        listed.last_try_text,
+        last_try_label(1_700_000_000_001),
+        "The stored completion time is shown, not a fixed label"
+    );
+
+    history.push(history_table_item(&finished_entry(2, "archive.ZIP", 2048)));
+    assert_eq!(history.row_count(), 2);
+    assert_eq!(history.row_data(0).unwrap().id, 1);
+    let newest = history.row_data(1).unwrap();
+    assert_eq!(newest.id, 2);
+    assert_eq!(newest.size_text, "2.0 KB");
+    assert_eq!(
+        newest.file_type, "zip",
+        "Extensions match case-insensitively"
+    );
+}
+
+#[test]
+fn history_tracker_archives_only_finished_downloads_of_earlier_sessions() {
+    use super::app::HistoryTracker;
+    use crate::engine::{DownloadSnapshot, DownloadStatus};
+
+    let finished = DownloadSnapshot {
+        session_id: 1,
+        url: "https://example.com/file.bin".into(),
+        filename: "file.bin".into(),
+        save_path: PathBuf::from("file.bin"),
+        status: DownloadStatus::Completed,
+        total_bytes: Some(1024),
+        downloaded_bytes: 1024,
+        ..Default::default()
+    };
+    let next_session = DownloadSnapshot {
+        session_id: 2,
+        status: DownloadStatus::Connecting,
+        ..Default::default()
+    };
+
+    // A finished download records completed immediately for persistence, and archives to UI on next session.
+    let mut tracker = HistoryTracker::new(1);
+    let obs1 = tracker.observe(&finished);
+    assert!(
+        obs1.completed.is_some(),
+        "persists to store immediately upon completion"
+    );
+    assert_eq!(
+        obs1.archived, None,
+        "not archived to UI while row 0 displays it"
+    );
+    let obs2 = tracker.observe(&finished);
+    assert_eq!(
+        obs2.completed, None,
+        "does not re-persist on repeated completed ticks"
+    );
+    assert_eq!(obs2.archived, None);
+    let listed = tracker
+        .observe(&next_session)
+        .archived
+        .expect("the next session lists the finished download");
+    assert_eq!(listed.id, 1, "the first listed row never uses id 0");
+    assert_eq!(listed.url, "https://example.com/file.bin");
+    assert_eq!(listed.filename, "file.bin");
+    assert_eq!(listed.save_path, PathBuf::from("file.bin"));
+    assert_eq!(listed.total_bytes, 1024);
+    assert!(listed.completed_unix_ms > 0, "the finish time is recorded");
+
+    // Each finished download is listed once, under the session it finished in.
+    let second_finished = DownloadSnapshot {
+        session_id: 2,
+        filename: "next.bin".into(),
+        status: DownloadStatus::Completed,
+        total_bytes: Some(2048),
+        downloaded_bytes: 2048,
+        ..Default::default()
+    };
+    let third_session = DownloadSnapshot {
+        session_id: 3,
+        status: DownloadStatus::Connecting,
+        ..Default::default()
+    };
+    let obs_second = tracker.observe(&second_finished);
+    assert!(obs_second.completed.is_some());
+    assert_eq!(obs_second.archived, None);
+    let listed = tracker
+        .observe(&third_session)
+        .archived
+        .expect("the second finished download is listed");
+    assert_eq!(listed.id, 2, "ids increase, so no listed row is reused");
+    assert_eq!(listed.filename, "next.bin");
+    assert_eq!(listed.total_bytes, 2048);
+
+    // A finish without a known total still records the bytes it downloaded.
+    let mut tracker = HistoryTracker::new(1);
+    let obs_no_total = tracker.observe(&DownloadSnapshot {
+        session_id: 7,
+        status: DownloadStatus::Completed,
+        downloaded_bytes: 512,
+        ..Default::default()
+    });
+    assert!(obs_no_total.completed.is_some());
+    let listed = tracker
+        .observe(&next_session)
+        .archived
+        .expect("a finish without a known total is still listed");
+    assert_eq!(listed.total_bytes, 512);
+
+    // Kept ids are reserved, so a new row never points at an earlier download.
+    let mut tracker = HistoryTracker::new(9);
+    assert!(tracker.observe(&finished).completed.is_some());
+    let listed = tracker
+        .observe(&next_session)
+        .archived
+        .expect("the download is listed above the kept ids");
+    assert_eq!(listed.id, 9, "a new row continues after the kept history");
+
+    // Pausing and resuming starts a new session, but nothing is listed without a finish.
+    let mut tracker = HistoryTracker::new(1);
+    let obs_down = tracker.observe(&DownloadSnapshot {
+        session_id: 5,
+        status: DownloadStatus::Downloading,
+        ..Default::default()
+    });
+    assert_eq!(obs_down.completed, None);
+    assert_eq!(obs_down.archived, None);
+    let obs_conn = tracker.observe(&DownloadSnapshot {
+        session_id: 6,
+        status: DownloadStatus::Connecting,
+        ..Default::default()
+    });
+    assert_eq!(obs_conn.completed, None);
+    assert_eq!(obs_conn.archived, None);
+
+    // A session that ends idle drops the download it would have listed.
+    let mut tracker = HistoryTracker::new(1);
+    tracker.observe(&finished);
+    let obs_idle = tracker.observe(&DownloadSnapshot {
+        session_id: 2,
+        status: DownloadStatus::Idle,
+        ..Default::default()
+    });
+    assert_eq!(obs_idle.archived, None);
+
+    // Overwriting the file also drops it, so stale sizes never reach the list.
+    let mut tracker = HistoryTracker::new(1);
+    tracker.observe(&finished);
+    tracker.clear_completed();
+    assert_eq!(tracker.observe(&next_session).archived, None);
+}
+
+#[test]
+fn completed_download_persists_immediately_without_next_session() {
+    use super::app::HistoryTracker;
+    use crate::engine::{DownloadSnapshot, DownloadStatus};
+    use crate::history::tests::TempFile;
+
+    let file = TempFile::new("immediate-save");
+    let mut store = HistoryStore::load_from(file.path().to_path_buf());
+    let mut tracker = HistoryTracker::new(store.next_id());
+
+    let finished = DownloadSnapshot {
+        session_id: 1,
+        url: "https://example.com/testfile.iso".into(),
+        filename: "testfile.iso".into(),
+        save_path: PathBuf::from("testfile.iso"),
+        status: DownloadStatus::Completed,
+        total_bytes: Some(1_048_576),
+        downloaded_bytes: 1_048_576,
+        ..Default::default()
+    };
+
+    let obs = tracker.observe(&finished);
+    let entry = obs
+        .completed
+        .expect("first completed observation emits entry");
+    assert_eq!(obs.archived, None);
+    store.record(entry).unwrap();
+
+    // Re-opening the app (loading store afresh from disk) contains the completed download
+    let reloaded = HistoryStore::load_from(file.path().to_path_buf());
+    assert_eq!(reloaded.entries().len(), 1);
+    assert_eq!(reloaded.entries()[0].filename, "testfile.iso");
 }

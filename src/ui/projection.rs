@@ -1,6 +1,7 @@
 use super::format::{format_bytes, format_eta, format_speed};
 use super::view::MainWindow;
 use crate::engine::{DownloadSnapshot, DownloadStatus};
+use crate::history::{HistoryEntry, last_try_label};
 use std::path::Path;
 use tokio::sync::watch;
 
@@ -9,6 +10,70 @@ pub(super) fn should_project_snapshot<T>(snapshot: &watch::Ref<'_, T>, initial: 
     let should_project = *initial || snapshot.has_changed();
     *initial = false;
     should_project
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FileType {
+    Executable,
+    Compressed,
+    Video,
+    Audio,
+    Document,
+}
+
+impl FileType {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Executable => "exe",
+            Self::Compressed => "zip",
+            Self::Video => "video",
+            Self::Audio => "audio",
+            Self::Document => "doc",
+        }
+    }
+}
+
+pub(super) fn file_type_from_filename(filename: &str) -> FileType {
+    let ext = Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    match ext.as_str() {
+        "exe" | "msi" | "bat" | "cmd" => FileType::Executable,
+        "zip" | "rar" | "7z" | "tar" | "gz" | "iso" => FileType::Compressed,
+        "mp4" | "mkv" | "avi" | "mov" | "webm" => FileType::Video,
+        "mp3" | "wav" | "flac" | "aac" | "ogg" => FileType::Audio,
+        _ => FileType::Document,
+    }
+}
+
+pub(super) fn category_matches(category: i32, file_type: FileType, completed: bool) -> bool {
+    match category {
+        0 => true,
+        1 => file_type == FileType::Compressed,
+        2 => file_type == FileType::Document,
+        3 => file_type == FileType::Audio,
+        4 => file_type == FileType::Executable,
+        5 => file_type == FileType::Video,
+        6 => !completed,
+        7 => completed,
+        _ => false,
+    }
+}
+
+pub(super) fn history_table_item(entry: &HistoryEntry) -> super::view::TableItem {
+    super::view::TableItem {
+        id: entry.id,
+        filename: entry.filename.clone().into(),
+        file_type: file_type_from_filename(&entry.filename).as_str().into(),
+        size_text: format_bytes(entry.total_bytes).into(),
+        status_text: "Complete".into(),
+        time_left_text: "--:--".into(),
+        transfer_rate_text: "0 KB/s".into(),
+        last_try_text: last_try_label(entry.completed_unix_ms).into(),
+    }
 }
 
 pub(super) fn update_window_state(window: &MainWindow, snap: &DownloadSnapshot) {
@@ -28,20 +93,8 @@ pub(super) fn update_window_state(window: &MainWindow, snap: &DownloadSnapshot) 
     window.set_is_resumable(snap.resumable);
 
     window.set_active_filename(snap.filename.clone().into());
-    let ext = Path::new(&snap.filename)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-
-    let file_type = match ext.as_str() {
-        "exe" | "msi" | "bat" | "cmd" => "exe",
-        "zip" | "rar" | "7z" | "tar" | "gz" | "iso" => "zip",
-        "mp4" | "mkv" | "avi" | "mov" | "webm" => "video",
-        "mp3" | "wav" | "flac" | "aac" | "ogg" => "audio",
-        _ => "doc",
-    };
-    window.set_active_file_type(file_type.into());
+    let file_type = file_type_from_filename(&snap.filename);
+    window.set_active_file_type(file_type.as_str().into());
 
     let (badge, color, err) = match &snap.status {
         DownloadStatus::Idle => (
@@ -93,11 +146,12 @@ pub(super) fn update_window_state(window: &MainWindow, snap: &DownloadSnapshot) 
 
     window.set_active_transfer_rate(format_speed(snap.speed_bytes_per_sec).into());
     let size_str = match snap.total_bytes {
-        Some(total) => format!(
+        Some(total) if !is_completed => format!(
             "{} / {}",
             format_bytes(snap.downloaded_bytes),
             format_bytes(total)
         ),
+        Some(total) => format_bytes(total),
         None => format_bytes(snap.downloaded_bytes),
     };
     window.set_active_size(size_str.into());

@@ -10,6 +10,11 @@ slint = { version = "1", default-features = false, features = ["backend-winit", 
 reqwest = { version = "0.13.5", default-features = false, features = ["default-tls", "charset", "system-proxy"] }
 rfd = "0.17.2"
 thiserror = "2.0.20"
+# Only local-time formatting for history labels; no default features we do not use.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# History records are stored one JSON object per line.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 
 [build-dependencies]

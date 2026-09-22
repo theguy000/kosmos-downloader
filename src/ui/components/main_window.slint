@@ -74,7 +74,11 @@ export component MainWindow inherits Window {
     out property <bool> can_resume: !root.show_duplicate_dialog && root.active_row_visible && root.selected_row == 0 && root.is_paused;
     out property <bool> can_stop: !root.show_duplicate_dialog && root.active_row_visible && root.selected_row == 0 && root.is_downloading;
     out property <bool> can_stop_all: !root.show_duplicate_dialog && root.has_active_download && root.is_downloading;
-    out property <bool> can_delete_selected: !root.show_duplicate_dialog && root.active_row_visible && root.selected_row == 0;
+    in-out property <bool> history_row_selected: false;
+    out property <bool> can_delete_selected: !root.show_duplicate_dialog && (
+        (root.active_row_visible && root.selected_row == 0)
+        || (root.history_row_selected && root.selected_row > 0)
+    );
     out property <bool> can_delete_completed: !root.show_duplicate_dialog && root.has_active_download && root.is_completed;
     out property <int> total_items: root.sample_downloads.length + (root.has_active_download ? 1 : 0);
 
@@ -87,10 +91,20 @@ export component MainWindow inherits Window {
     callback request_delete_completed();
     callback confirm_delete(bool);
     callback dismiss_delete();
+    /// Reports the outcome of removing the file of a listed download.
+    callback history_delete_finished(int, bool, string);
     callback resolve_duplicate(int, bool);
     callback dismiss_duplicate();
     callback browse_folder();
+    /// Opens the file of the selected row: the active download in row 0, or an archived one.
     callback open_file();
+    callback row_selected(int);
+    /// Moves the selection in the download table by one row.
+    callback step_selection(int);
+    /// The category changed, so the selected row may no longer be listed.
+    callback selected_category_changed();
+
+    changed selected_category => { root.selected_category_changed(); }
 
     public function close-delete-dialog() {
         root.show_delete_dialog = false;
@@ -125,7 +139,7 @@ export component MainWindow inherits Window {
             resume-download => { root.resume_download(); }
             request-delete-selected => { root.request-delete-selected(); }
             request-delete-completed => { root.request-delete-completed(); }
-            open-file => { root.open_file(); }
+            open-file => { root.selected_row = 0; root.open_file(); }
         }
 
         HorizontalLayout {
@@ -157,6 +171,8 @@ export component MainWindow inherits Window {
                 total-items: root.total_items;
                 sample-downloads: root.sample_downloads;
                 open-file => { root.open_file(); }
+                row-selected(id) => { root.row_selected(id); }
+                step-selection(step) => { root.step_selection(step); }
             }
         }
 
