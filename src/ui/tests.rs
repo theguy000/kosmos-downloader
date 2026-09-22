@@ -232,18 +232,13 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         });
         assert_eq!(ui.get_url_text(), "https://example.com/file.zip");
         let shortcut = |text: &str| {
-            let modifier = if cfg!(target_os = "macos") {
-                slint::platform::Key::Meta
-            } else {
-                slint::platform::Key::Control
-            };
             window.dispatch_event(WindowEvent::KeyPressed {
-                text: modifier.into(),
+                text: slint::platform::Key::Control.into(),
             });
             window.dispatch_event(WindowEvent::KeyPressed { text: text.into() });
             window.dispatch_event(WindowEvent::KeyReleased { text: text.into() });
             window.dispatch_event(WindowEvent::KeyReleased {
-                text: modifier.into(),
+                text: slint::platform::Key::Control.into(),
             });
         };
         shortcut("a");

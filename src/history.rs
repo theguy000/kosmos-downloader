@@ -172,20 +172,8 @@ fn default_history_path() -> PathBuf {
 }
 
 fn history_directory() -> PathBuf {
-    #[cfg(windows)]
-    {
-        if let Some(directory) = environment_path("LOCALAPPDATA") {
-            return directory.join(HISTORY_DIRECTORY_NAME);
-        }
-    }
-    #[cfg(unix)]
-    {
-        if let Some(home) = environment_path("HOME") {
-            return home
-                .join(".local")
-                .join("share")
-                .join(HISTORY_DIRECTORY_NAME);
-        }
+    if let Some(directory) = environment_path("LOCALAPPDATA") {
+        return directory.join(HISTORY_DIRECTORY_NAME);
     }
     std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))

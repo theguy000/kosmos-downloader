@@ -515,7 +515,7 @@ export component DialogInput inherits Rectangle {
                         input.focus();
                         return event.text == Key.Tab ? reject : accept;
                     }
-                    if Platform.os == OperatingSystemType.macos ? event.modifiers.meta : event.modifiers.control {
+                    if event.modifiers.control {
                         if event.text.to-lowercase() == "x" { root.edit(0); return accept; }
                         if event.text.to-lowercase() == "c" { root.edit(1); return accept; }
                         if event.text.to-lowercase() == "v" { root.edit(2); return accept; }
@@ -552,7 +552,7 @@ export component DialogInput inherits Rectangle {
                                 vertical-alignment: center;
                             }
                             Text {
-                                text: (Platform.os == OperatingSystemType.macos ? "Cmd+" : "Ctrl+") + item.shortcut;
+                                text: "Ctrl+" + item.shortcut;
                                 font-size: 11px;
                                 color: menu-row.available ? #a1a1aa : #71717a;
                                 horizontal-alignment: right;

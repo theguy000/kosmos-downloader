@@ -287,7 +287,6 @@ fn last_try_label_reports_local_time_and_rejects_out_of_range() {
     assert!(now_unix_ms() > 1_600_000_000_000);
 }
 
-#[cfg(windows)]
 #[test]
 fn default_history_path_is_under_local_app_data() {
     let path = default_history_path();

@@ -81,36 +81,16 @@ impl Storage {
     /// Writes data directly at the specified byte offset.
     /// Thread-safe and lock-free across concurrent worker threads.
     pub fn write_at(&self, mut offset: u64, mut data: &[u8]) -> Result<(), StorageError> {
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::FileExt;
-            while !data.is_empty() {
-                let written = self.file.seek_write(data, offset)?;
-                if written == 0 {
-                    return Err(StorageError::ZeroWrite);
-                }
-                offset += written as u64;
-                data = &data[written..];
+        use std::os::windows::fs::FileExt;
+        while !data.is_empty() {
+            let written = self.file.seek_write(data, offset)?;
+            if written == 0 {
+                return Err(StorageError::ZeroWrite);
             }
-            Ok(())
+            offset += written as u64;
+            data = &data[written..];
         }
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::FileExt;
-            self.file
-                .write_all_at(data, offset)
-                .map_err(StorageError::Io)
-        }
-
-        #[cfg(not(any(windows, unix)))]
-        {
-            use std::io::{Seek, SeekFrom, Write};
-            let mut file = (&*self.file).try_clone()?;
-            file.seek(SeekFrom::Start(offset))?;
-            file.write_all(data)?;
-            Ok(())
-        }
+        Ok(())
     }
 
     /// Reads exactly `data.len()` bytes at the specified byte offset.
@@ -128,48 +108,28 @@ impl Storage {
             ))
         })?;
 
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::FileExt;
+        use std::os::windows::fs::FileExt;
 
-            let mut current_offset = offset;
-            let mut remaining = data;
-            while !remaining.is_empty() {
-                match self.file.seek_read(remaining, current_offset) {
-                    Ok(0) => {
-                        return Err(StorageError::Io(std::io::Error::new(
-                            std::io::ErrorKind::UnexpectedEof,
-                            "unexpected EOF during offset read",
-                        )));
-                    }
-                    Ok(bytes_read) => {
-                        // The entire read range was checked above; reads cannot exceed it.
-                        current_offset += bytes_read as u64;
-                        remaining = &mut remaining[bytes_read..];
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                    Err(error) => return Err(StorageError::Io(error)),
+        let mut current_offset = offset;
+        let mut remaining = data;
+        while !remaining.is_empty() {
+            match self.file.seek_read(remaining, current_offset) {
+                Ok(0) => {
+                    return Err(StorageError::Io(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "unexpected EOF during offset read",
+                    )));
                 }
+                Ok(bytes_read) => {
+                    // The entire read range was checked above; reads cannot exceed it.
+                    current_offset += bytes_read as u64;
+                    remaining = &mut remaining[bytes_read..];
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(StorageError::Io(error)),
             }
-            Ok(())
         }
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::FileExt;
-            self.file
-                .read_exact_at(data, offset)
-                .map_err(StorageError::Io)
-        }
-
-        #[cfg(not(any(windows, unix)))]
-        {
-            use std::io::{Read, Seek, SeekFrom};
-            let mut file = (&*self.file).try_clone()?;
-            file.seek(SeekFrom::Start(offset))?;
-            file.read_exact(data)?;
-            Ok(())
-        }
+        Ok(())
     }
 
     /// Flushes all pending writes to physical disk storage.
