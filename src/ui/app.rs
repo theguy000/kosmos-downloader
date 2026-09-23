@@ -1,7 +1,7 @@
 use super::platform::{default_download_directory, open_file};
 use super::projection::{
     category_matches, file_type_from_filename, history_table_item, should_project_snapshot,
-    update_window_state,
+    sort_items, update_window_state,
 };
 use super::view::{MainWindow, TableItem};
 use crate::engine::{DownloadAction, DownloadSnapshot, DownloadStatus, DuplicateChoice};
@@ -89,13 +89,7 @@ fn open_history_delete_confirmation(
     window.set_show_delete_dialog(true);
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct HistoryObservation {
-    pub(super) completed: Option<HistoryEntry>,
-    pub(super) archived: Option<HistoryEntry>,
-}
-
-/// Follows the active session and the finished download that still has to be listed.
+/// Follows the active session and reports the download it finishes.
 pub(super) struct HistoryTracker {
     /// Id for the next listed download. Never 0, which marks the active download.
     next_item_id: i32,
@@ -112,40 +106,30 @@ impl HistoryTracker {
         }
     }
 
-    /// Records `snap` and returns observation events.
+    /// Records `snap` and returns the finished download.
     ///
-    /// - `completed`: Some(entry) the first time a session reports `Completed` (to persist to disk).
-    /// - `archived`: Some(entry) when a subsequent non-idle session starts (to add to the UI table).
-    pub(super) fn observe(&mut self, snap: &DownloadSnapshot) -> HistoryObservation {
-        let mut archived = None;
+    /// The first snapshot a session reports `Completed` yields its entry, so it can be persisted
+    /// and listed right away. A later session clears the kept entry without re-listing it.
+    pub(super) fn observe(&mut self, snap: &DownloadSnapshot) -> Option<HistoryEntry> {
         if snap.session_id != self.session_id {
-            if snap.status != DownloadStatus::Idle
-                && let Some(done) = self.completed.take()
-            {
-                archived = Some(done);
-            }
             self.session_id = snap.session_id;
+            self.completed = None;
         }
 
-        let mut completed = None;
         match snap.status {
             // The first snapshot to report the finish is the one kept, so the listed row keeps
             // the id and the completion time of that first report.
-            DownloadStatus::Completed => {
-                if self.completed.is_none() {
-                    let entry = finished_download(self.next_item_id, snap);
-                    self.next_item_id = self.next_item_id.saturating_add(1);
-                    self.completed = Some(entry.clone());
-                    completed = Some(entry);
-                }
+            DownloadStatus::Completed if self.completed.is_none() => {
+                let entry = finished_download(self.next_item_id, snap);
+                self.next_item_id = self.next_item_id.saturating_add(1);
+                self.completed = Some(entry.clone());
+                Some(entry)
             }
-            DownloadStatus::Idle => self.completed = None,
-            _ => {}
-        }
-
-        HistoryObservation {
-            completed,
-            archived,
+            DownloadStatus::Idle => {
+                self.completed = None;
+                None
+            }
+            _ => None,
         }
     }
 
@@ -229,6 +213,27 @@ fn remove_row_by_id(model: &slint::VecModel<TableItem>, id: i32) {
     }
 }
 
+/// Reorders the model for `column`. An unknown column leaves the order alone.
+fn resort(history: &slint::VecModel<TableItem>, column: i32, ascending: bool) {
+    use slint::Model;
+    let mut rows: Vec<TableItem> = history.iter().collect();
+    sort_items(&mut rows, column, ascending);
+    history.set_vec(rows);
+}
+
+/// Applies a header click: toggles the direction when the same column is clicked again,
+/// restarts ascending for a new column, reorders the model, and records the state on the window.
+pub(super) fn apply_sort_request(
+    window: &MainWindow,
+    history: &slint::VecModel<TableItem>,
+    column: i32,
+) {
+    let ascending = window.get_sort_column() != column || !window.get_sort_ascending();
+    window.set_sort_column(column);
+    window.set_sort_ascending(ascending);
+    resort(history, column, ascending);
+}
+
 /// A file that is already gone counts as deleted; anything else is reported.
 pub(super) fn history_delete_failure(removal: std::io::Result<()>) -> Option<std::io::Error> {
     match removal {
@@ -238,11 +243,26 @@ pub(super) fn history_delete_failure(removal: std::io::Result<()>) -> Option<std
     }
 }
 
+/// Drops the finished download the toolbar still offers and hides it from Delete Completed.
+fn clear_active_completed(
+    window: &MainWindow,
+    tracker: &RefCell<HistoryTracker>,
+) -> Option<HistoryEntry> {
+    let entry = tracker.borrow_mut().clear_completed();
+    if entry.is_some() {
+        window.set_completed_listed(false);
+    }
+    entry
+}
+
 /// Removes a listed download from the log, the table, and the selection.
 ///
-/// A file deletion that failed keeps the row and reports why, so it can be tried again.
+/// Removing the row of the finished download the toolbar holds also stops offering it, so the
+/// two delete paths agree. A file deletion that failed keeps the row and reports why, so it can
+/// be tried again.
 pub(super) fn complete_history_delete(
     window: &MainWindow,
+    tracker: &RefCell<HistoryTracker>,
     store: &mut HistoryStore,
     history: &slint::VecModel<TableItem>,
     id: i32,
@@ -257,6 +277,14 @@ pub(super) fn complete_history_delete(
             );
         }
         remove_row_by_id(history, id);
+        if tracker
+            .borrow()
+            .completed
+            .as_ref()
+            .is_some_and(|entry| entry.id == id)
+        {
+            clear_active_completed(window, tracker);
+        }
         if window.get_selected_row() == id {
             window.set_selected_row(-1);
             window.set_history_row_selected(false);
@@ -313,6 +341,10 @@ pub fn run_app(
     let history_tracker = Rc::new(RefCell::new(HistoryTracker::new(
         history_store.borrow().next_id(),
     )));
+    // Default sort: Downloaded, newest first.
+    main_window.set_sort_column(3);
+    main_window.set_sort_ascending(false);
+    resort(&download_history, 3, false);
 
     {
         let window_weak = main_window.as_weak();
@@ -341,6 +373,16 @@ pub fn run_app(
         main_window.on_step_selection(move |step| {
             if let Some(window) = window_weak.upgrade() {
                 step_selection(&window, &store.borrow(), step);
+            }
+        });
+    }
+
+    {
+        let history = download_history.clone();
+        let window_weak = main_window.as_weak();
+        main_window.on_sort_requested(move |column| {
+            if let Some(window) = window_weak.upgrade() {
+                apply_sort_request(&window, &history, column);
             }
         });
     }
@@ -470,8 +512,9 @@ pub fn run_app(
                     }
                     request.status = snapshot.status.clone();
 
-                    if let Some(entry) = tracker.borrow_mut().clear_completed() {
+                    if let Some(entry) = clear_active_completed(&window, &tracker) {
                         let _ = store.borrow_mut().remove(entry.id);
+                        remove_row_by_id(&history, entry.id);
                     }
 
                     if send_action(&window, &tx, request.action(delete_file)) {
@@ -485,6 +528,7 @@ pub fn run_app(
                     } else {
                         complete_history_delete(
                             &window,
+                            &tracker,
                             &mut store.borrow_mut(),
                             &history,
                             id,
@@ -497,6 +541,7 @@ pub fn run_app(
     }
 
     {
+        let tracker = history_tracker.clone();
         let store = history_store.clone();
         let history = download_history.clone();
         let window_weak = main_window.as_weak();
@@ -506,6 +551,7 @@ pub fn run_app(
             };
             complete_history_delete(
                 &window,
+                &tracker,
                 &mut store.borrow_mut(),
                 &history,
                 id,
@@ -520,6 +566,7 @@ pub fn run_app(
         let window_weak = main_window.as_weak();
         let tracker = history_tracker.clone();
         let store = history_store.clone();
+        let history = download_history.clone();
         main_window.on_resolve_duplicate(move |option, remember| {
             let Some(window) = window_weak.upgrade() else {
                 return;
@@ -533,8 +580,9 @@ pub fn run_app(
                 0 => DuplicateChoice::UseExisting,
                 1 => DuplicateChoice::Numbered,
                 2 => {
-                    if let Some(entry) = tracker.borrow_mut().clear_completed() {
+                    if let Some(entry) = clear_active_completed(&window, &tracker) {
                         let _ = store.borrow_mut().remove(entry.id);
+                        remove_row_by_id(&history, entry.id);
                     }
                     DuplicateChoice::Overwrite
                 }
@@ -626,16 +674,25 @@ pub fn run_app(
 
                 let snap = rx.borrow_and_update();
                 if should_project_snapshot(&snap, &mut initial_snapshot) {
-                    let observation = tracker.borrow_mut().observe(&snap);
-                    if let Some(entry) = observation.completed
-                        && let Err(error) = store.borrow_mut().record(entry)
-                    {
-                        window.set_action_error_message(
-                            format!("Could not save download history: {error}").into(),
-                        );
-                    }
-                    if let Some(entry) = observation.archived {
+                    if let Some(entry) = tracker.borrow_mut().observe(&snap) {
+                        if let Err(error) = store.borrow_mut().record(entry.clone()) {
+                            window.set_action_error_message(
+                                format!("Could not save download history: {error}").into(),
+                            );
+                        }
+                        // The finished download is listed at once, in the active sort's position.
                         history.push(history_table_item(&entry));
+                        resort(
+                            &history,
+                            window.get_sort_column(),
+                            window.get_sort_ascending(),
+                        );
+                        window.set_completed_listed(true);
+                        // Keep the selection with the row that just moved into the list.
+                        if window.get_selected_row() == 0 {
+                            window.set_selected_row(entry.id);
+                            update_selection_state(&window, &store.borrow(), entry.id);
+                        }
                     }
 
                     let projected_target = DeleteTarget::displayed(&snap);

@@ -276,14 +276,14 @@ fn rejected_records_are_ignored() {
 }
 
 #[test]
-fn last_try_label_reports_local_time_and_rejects_out_of_range() {
-    let label = last_try_label(1_700_000_000_000);
+fn downloaded_label_reports_local_time_and_rejects_out_of_range() {
+    let label = downloaded_label(1_700_000_000_000);
     assert_eq!(label.len(), "2023-11-14 22:13".len());
     assert_eq!(label.as_bytes()[4], b'-');
     assert_eq!(label.as_bytes()[10], b' ');
     assert_eq!(label.as_bytes()[13], b':');
 
-    assert_eq!(last_try_label(u64::MAX), "Unknown");
+    assert_eq!(downloaded_label(u64::MAX), "Unknown");
     assert!(now_unix_ms() > 1_600_000_000_000);
 }
 

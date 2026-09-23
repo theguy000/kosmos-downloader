@@ -1,8 +1,10 @@
 use super::MainWindow;
 use super::app::{DeleteTarget, complete_history_delete, history_delete_failure, send_action};
 use super::platform::default_download_directory;
-use super::projection::{history_table_item, should_project_snapshot, update_window_state};
-use crate::history::{HistoryEntry, HistoryStore, last_try_label};
+use super::projection::{
+    history_table_item, should_project_snapshot, sort_items, update_window_state,
+};
+use crate::history::{HistoryEntry, HistoryStore, downloaded_label};
 use slint::ComponentHandle;
 use std::path::PathBuf;
 
@@ -576,6 +578,7 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         }
         snapshot.status = DownloadStatus::Completed;
         update_window_state(&ui, &snapshot);
+        ui.set_completed_listed(true);
         ui.set_selected_category(6);
         ui.set_selected_row(1);
         assert!(!ui.get_can_delete_selected());
@@ -583,6 +586,10 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
             ui.get_can_delete_completed(),
             "Delete Completed ignores row and category selection"
         );
+        // Once the listed row of the finished download is deleted, it is no longer offered.
+        ui.set_completed_listed(false);
+        assert!(!ui.get_can_delete_completed());
+        ui.set_completed_listed(true);
         render();
         click(380.0, 50.0);
         assert_eq!(completed_delete_requests.get(), 1);
@@ -874,9 +881,12 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
             "each sidebar pick is reported once"
         );
 
+        // A finished download is never pinned; only an unfinished one follows the category filter.
+        snapshot.status = DownloadStatus::Downloading;
+        update_window_state(&ui, &snapshot);
         for category in 0..10 {
             ui.set_selected_category(category);
-            assert_eq!(ui.get_active_row_visible(), matches!(category, 0 | 1 | 7));
+            assert_eq!(ui.get_active_row_visible(), matches!(category, 0 | 1 | 6));
         }
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         assert!(send_action(&ui, &tx, DownloadAction::Pause));
@@ -911,11 +921,13 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
 
     // History selection and deletion updates store and window
     {
-        use super::app::{step_selection, update_selection_state};
+        use super::app::{HistoryTracker, step_selection, update_selection_state};
         use crate::history::tests::TempFile;
+        use std::cell::RefCell;
 
         let file = TempFile::new("delete-history-test");
         let mut store = HistoryStore::load_from(file.path().to_path_buf());
+        let tracker = RefCell::new(HistoryTracker::new(1));
 
         let entry = crate::history::HistoryEntry {
             id: 1,
@@ -1048,7 +1060,20 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         // Deleting a listed download drops the file first, then the log entry and the row.
         let rows_before = ui.get_sample_downloads().row_count();
         std::fs::remove_file(&entry.save_path)?;
-        complete_history_delete(&ui, &mut store, &history, entry.id, None);
+        // The toolbar holds the finished download, so its row is the one it offers to delete.
+        tracker
+            .borrow_mut()
+            .observe(&crate::engine::DownloadSnapshot {
+                session_id: 1,
+                filename: "video.mp4".into(),
+                status: crate::engine::DownloadStatus::Completed,
+                total_bytes: Some(10_000),
+                downloaded_bytes: 10_000,
+                ..Default::default()
+            })
+            .expect("the finish is held for Delete Completed");
+        ui.set_completed_listed(true);
+        complete_history_delete(&ui, &tracker, &mut store, &history, entry.id, None);
         assert!(!entry.save_path.exists(), "file is removed from disk");
         assert!(
             store.entries().iter().all(|kept| kept.id != entry.id),
@@ -1062,6 +1087,10 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         assert_eq!(ui.get_selected_row(), -1, "the removed row is not selected");
         assert!(!ui.get_history_row_selected());
         assert_eq!(ui.get_action_error_message(), "");
+        assert!(
+            !ui.get_completed_listed(),
+            "Delete Completed is withdrawn once the finished download is no longer listed"
+        );
 
         // Reloading store confirms disk file was rewritten
         let reloaded = HistoryStore::load_from(file.path().to_path_buf());
@@ -1075,6 +1104,7 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         ui.set_show_delete_dialog(true);
         complete_history_delete(
             &ui,
+            &tracker,
             &mut store,
             &history,
             entry.id,
@@ -1097,6 +1127,49 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
             "the failure is reported instead of being swallowed"
         );
         assert!(!ui.get_show_delete_dialog());
+    }
+
+    // A header click reorders the listed rows and mirrors the sort state back to the window.
+    {
+        use super::TableItem;
+        use super::app::apply_sort_request;
+        use slint::Model;
+
+        let sort_history = Rc::new(slint::VecModel::<TableItem>::default());
+        sort_history.push(history_table_item(&finished_entry(1, "alpha.bin", 4096)));
+        sort_history.push(history_table_item(&finished_entry(2, "beta.bin", 1024)));
+        sort_history.push(history_table_item(&finished_entry(3, "gamma.bin", 2048)));
+        ui.set_sample_downloads(sort_history.clone().into());
+
+        {
+            let sort_history = sort_history.clone();
+            let weak = ui.as_weak();
+            ui.on_sort_requested(move |column| {
+                if let Some(window) = weak.upgrade() {
+                    apply_sort_request(&window, &sort_history, column);
+                }
+            });
+        }
+
+        ui.invoke_sort_requested(1);
+        assert_eq!(ui.get_sort_column(), 1);
+        assert!(ui.get_sort_ascending());
+        assert_eq!(
+            sort_history
+                .iter()
+                .map(|item| item.filename.to_string())
+                .collect::<Vec<_>>(),
+            ["beta.bin", "gamma.bin", "alpha.bin"],
+            "Size ascending orders the listed rows"
+        );
+
+        ui.invoke_sort_requested(1);
+        assert!(!ui.get_sort_ascending(), "the same header flips direction");
+        assert_eq!(sort_history.row_data(0).unwrap().filename, "alpha.bin");
+
+        ui.invoke_sort_requested(3);
+        assert_eq!(ui.get_sort_column(), 3);
+        assert!(ui.get_sort_ascending(), "a new column restarts ascending");
     }
 
     Ok(())
@@ -1225,10 +1298,11 @@ fn completed_download_archiving_preserves_history() {
     assert_eq!(listed.time_left_text, "--:--");
     assert_eq!(listed.transfer_rate_text, "0 KB/s");
     assert_eq!(
-        listed.last_try_text,
-        last_try_label(1_700_000_000_001),
+        listed.downloaded_text,
+        downloaded_label(1_700_000_000_001),
         "The stored completion time is shown, not a fixed label"
     );
+    assert_eq!(listed.size_bytes, 1024.0);
 
     history.push(history_table_item(&finished_entry(2, "archive.ZIP", 2048)));
     assert_eq!(history.row_count(), 2);
@@ -1243,7 +1317,58 @@ fn completed_download_archiving_preserves_history() {
 }
 
 #[test]
-fn history_tracker_archives_only_finished_downloads_of_earlier_sessions() {
+fn sort_items_orders_by_each_sortable_column() {
+    use super::TableItem;
+
+    let mut items: Vec<TableItem> = [
+        ("beta.bin", 4096_u64),
+        ("Alpha.bin", 1024),
+        ("gamma.bin", 2048),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (name, size))| {
+        let mut entry = finished_entry(index as i32 + 1, name, size);
+        // One minute apart, so the displayed Downloaded times differ.
+        entry.completed_unix_ms = 1_700_000_000_000 + index as u64 * 60_000;
+        history_table_item(&entry)
+    })
+    .collect();
+
+    // Name is compared case-insensitively.
+    sort_items(&mut items, 0, true);
+    let names: Vec<&str> = items.iter().map(|item| item.filename.as_str()).collect();
+    assert_eq!(names, ["Alpha.bin", "beta.bin", "gamma.bin"]);
+
+    // Size sorts numerically, and descending flips the order.
+    sort_items(&mut items, 1, true);
+    assert_eq!(items[0].size_bytes, 1024.0);
+    assert_eq!(items[2].size_bytes, 4096.0);
+    sort_items(&mut items, 1, false);
+    assert_eq!(items[0].size_bytes, 4096.0);
+
+    // Downloaded sorts by the displayed time, oldest first.
+    sort_items(&mut items, 3, true);
+    assert_eq!(items[0].id, 1);
+    assert_eq!(items[2].id, 3);
+
+    // Status and Time left are not sortable, so the order is untouched.
+    let order: Vec<i32> = items.iter().map(|item| item.id).collect();
+    sort_items(&mut items, 2, true);
+    sort_items(&mut items, 5, true);
+    assert_eq!(items.iter().map(|item| item.id).collect::<Vec<_>>(), order);
+
+    // Equal keys fall back to ascending id.
+    let mut tied: Vec<TableItem> = (1..=2)
+        .map(|id| history_table_item(&finished_entry(id, "same.bin", 2048)))
+        .collect();
+    tied.reverse();
+    sort_items(&mut tied, 1, true);
+    assert_eq!(tied.iter().map(|item| item.id).collect::<Vec<_>>(), [1, 2]);
+}
+
+#[test]
+fn history_tracker_reports_each_finish_once() {
     use super::app::HistoryTracker;
     use crate::engine::{DownloadSnapshot, DownloadStatus};
 
@@ -1263,27 +1388,11 @@ fn history_tracker_archives_only_finished_downloads_of_earlier_sessions() {
         ..Default::default()
     };
 
-    // A finished download records completed immediately for persistence, and archives to UI on next session.
+    // A finish is reported immediately, with the identity the listed row needs.
     let mut tracker = HistoryTracker::new(1);
-    let obs1 = tracker.observe(&finished);
-    assert!(
-        obs1.completed.is_some(),
-        "persists to store immediately upon completion"
-    );
-    assert_eq!(
-        obs1.archived, None,
-        "not archived to UI while row 0 displays it"
-    );
-    let obs2 = tracker.observe(&finished);
-    assert_eq!(
-        obs2.completed, None,
-        "does not re-persist on repeated completed ticks"
-    );
-    assert_eq!(obs2.archived, None);
     let listed = tracker
-        .observe(&next_session)
-        .archived
-        .expect("the next session lists the finished download");
+        .observe(&finished)
+        .expect("a finish is reported right away");
     assert_eq!(listed.id, 1, "the first listed row never uses id 0");
     assert_eq!(listed.url, "https://example.com/file.bin");
     assert_eq!(listed.filename, "file.bin");
@@ -1291,7 +1400,18 @@ fn history_tracker_archives_only_finished_downloads_of_earlier_sessions() {
     assert_eq!(listed.total_bytes, 1024);
     assert!(listed.completed_unix_ms > 0, "the finish time is recorded");
 
-    // Each finished download is listed once, under the session it finished in.
+    assert_eq!(
+        tracker.observe(&finished),
+        None,
+        "repeated completed ticks are not listed again"
+    );
+    assert_eq!(
+        tracker.observe(&next_session),
+        None,
+        "a later session does not re-list the same finish"
+    );
+
+    // Each finish is reported once, under its own session.
     let second_finished = DownloadSnapshot {
         session_id: 2,
         filename: "next.bin".into(),
@@ -1300,78 +1420,68 @@ fn history_tracker_archives_only_finished_downloads_of_earlier_sessions() {
         downloaded_bytes: 2048,
         ..Default::default()
     };
-    let third_session = DownloadSnapshot {
-        session_id: 3,
-        status: DownloadStatus::Connecting,
-        ..Default::default()
-    };
-    let obs_second = tracker.observe(&second_finished);
-    assert!(obs_second.completed.is_some());
-    assert_eq!(obs_second.archived, None);
     let listed = tracker
-        .observe(&third_session)
-        .archived
-        .expect("the second finished download is listed");
+        .observe(&second_finished)
+        .expect("the next finish is reported");
     assert_eq!(listed.id, 2, "ids increase, so no listed row is reused");
     assert_eq!(listed.filename, "next.bin");
     assert_eq!(listed.total_bytes, 2048);
 
     // A finish without a known total still records the bytes it downloaded.
     let mut tracker = HistoryTracker::new(1);
-    let obs_no_total = tracker.observe(&DownloadSnapshot {
-        session_id: 7,
-        status: DownloadStatus::Completed,
-        downloaded_bytes: 512,
-        ..Default::default()
-    });
-    assert!(obs_no_total.completed.is_some());
     let listed = tracker
-        .observe(&next_session)
-        .archived
+        .observe(&DownloadSnapshot {
+            session_id: 7,
+            status: DownloadStatus::Completed,
+            downloaded_bytes: 512,
+            ..Default::default()
+        })
         .expect("a finish without a known total is still listed");
     assert_eq!(listed.total_bytes, 512);
 
     // Kept ids are reserved, so a new row never points at an earlier download.
     let mut tracker = HistoryTracker::new(9);
-    assert!(tracker.observe(&finished).completed.is_some());
     let listed = tracker
-        .observe(&next_session)
-        .archived
+        .observe(&finished)
         .expect("the download is listed above the kept ids");
     assert_eq!(listed.id, 9, "a new row continues after the kept history");
 
     // Pausing and resuming starts a new session, but nothing is listed without a finish.
     let mut tracker = HistoryTracker::new(1);
-    let obs_down = tracker.observe(&DownloadSnapshot {
-        session_id: 5,
-        status: DownloadStatus::Downloading,
-        ..Default::default()
-    });
-    assert_eq!(obs_down.completed, None);
-    assert_eq!(obs_down.archived, None);
-    let obs_conn = tracker.observe(&DownloadSnapshot {
-        session_id: 6,
-        status: DownloadStatus::Connecting,
-        ..Default::default()
-    });
-    assert_eq!(obs_conn.completed, None);
-    assert_eq!(obs_conn.archived, None);
+    assert_eq!(
+        tracker.observe(&DownloadSnapshot {
+            session_id: 5,
+            status: DownloadStatus::Downloading,
+            ..Default::default()
+        }),
+        None
+    );
+    assert_eq!(
+        tracker.observe(&DownloadSnapshot {
+            session_id: 6,
+            status: DownloadStatus::Connecting,
+            ..Default::default()
+        }),
+        None
+    );
 
-    // A session that ends idle drops the download it would have listed.
+    // A session that ends idle drops the finish it was holding.
     let mut tracker = HistoryTracker::new(1);
     tracker.observe(&finished);
-    let obs_idle = tracker.observe(&DownloadSnapshot {
-        session_id: 2,
-        status: DownloadStatus::Idle,
-        ..Default::default()
-    });
-    assert_eq!(obs_idle.archived, None);
+    assert_eq!(
+        tracker.observe(&DownloadSnapshot {
+            session_id: 2,
+            status: DownloadStatus::Idle,
+            ..Default::default()
+        }),
+        None
+    );
 
     // Overwriting the file also drops it, so stale sizes never reach the list.
     let mut tracker = HistoryTracker::new(1);
     tracker.observe(&finished);
     tracker.clear_completed();
-    assert_eq!(tracker.observe(&next_session).archived, None);
+    assert_eq!(tracker.observe(&next_session), None);
 }
 
 #[test]
@@ -1395,11 +1505,9 @@ fn completed_download_persists_immediately_without_next_session() {
         ..Default::default()
     };
 
-    let obs = tracker.observe(&finished);
-    let entry = obs
-        .completed
+    let entry = tracker
+        .observe(&finished)
         .expect("first completed observation emits entry");
-    assert_eq!(obs.archived, None);
     store.record(entry).unwrap();
 
     // Re-opening the app (loading store afresh from disk) contains the completed download

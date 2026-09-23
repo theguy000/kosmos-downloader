@@ -1,7 +1,7 @@
 use super::format::{format_bytes, format_eta, format_speed};
 use super::view::MainWindow;
 use crate::engine::{DownloadSnapshot, DownloadStatus};
-use crate::history::{HistoryEntry, last_try_label};
+use crate::history::{HistoryEntry, downloaded_label};
 use std::path::Path;
 use tokio::sync::watch;
 
@@ -72,7 +72,35 @@ pub(super) fn history_table_item(entry: &HistoryEntry) -> super::view::TableItem
         status_text: "Complete".into(),
         time_left_text: "--:--".into(),
         transfer_rate_text: "0 KB/s".into(),
-        last_try_text: last_try_label(entry.completed_unix_ms).into(),
+        downloaded_text: downloaded_label(entry.completed_unix_ms).into(),
+        size_bytes: entry.total_bytes as f32,
+    }
+}
+
+/// Reorders the listed rows for a header sort. Columns 0, 1 and 3 are sortable (File Name,
+/// Size, Downloaded); any other column leaves the order untouched. Ties keep a stable order
+/// by row id.
+pub(super) fn sort_items(items: &mut [super::view::TableItem], column: i32, ascending: bool) {
+    use std::cmp::Ordering;
+
+    match column {
+        0 => items.sort_by_cached_key(|a| (a.filename.to_lowercase(), a.id)),
+        1 => items.sort_by(|a, b| {
+            a.size_bytes
+                .partial_cmp(&b.size_bytes)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| a.id.cmp(&b.id))
+        }),
+        3 => items.sort_by(|a, b| {
+            a.downloaded_text
+                .cmp(&b.downloaded_text)
+                .then_with(|| a.id.cmp(&b.id))
+        }),
+        _ => return,
+    }
+
+    if !ascending {
+        items.reverse();
     }
 }
 

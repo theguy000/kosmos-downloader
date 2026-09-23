@@ -195,8 +195,8 @@ pub fn now_unix_ms() -> u64 {
         })
 }
 
-/// Local time of `completed_unix_ms`, as shown in the Last Try Date column.
-pub fn last_try_label(completed_unix_ms: u64) -> String {
+/// Local time of `completed_unix_ms`, as shown in the Downloaded column.
+pub fn downloaded_label(completed_unix_ms: u64) -> String {
     i64::try_from(completed_unix_ms)
         .ok()
         .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)

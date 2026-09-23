@@ -11,7 +11,9 @@ export struct TableItem {
     status_text: string,
     time_left_text: string,
     transfer_rate_text: string,
-    last_try_text: string,
+    downloaded_text: string,
+    // Byte counts exceed int, so they travel as float to sort numerically.
+    size_bytes: float,
 }
 
 component DownloadRowColumns inherits HorizontalLayout {
@@ -21,7 +23,7 @@ component DownloadRowColumns inherits HorizontalLayout {
     in property <string> status_text;
     in property <string> time_left_text;
     in property <string> transfer_rate_text;
-    in property <string> last_try_text;
+    in property <string> downloaded_text;
     in property <bool> is_active: false;
     in property <color> status_color: #10b981;
 
@@ -98,10 +100,71 @@ component DownloadRowColumns inherits HorizontalLayout {
         padding-left: 6px;
         alignment: start;
         Text {
-            text: root.last_try_text;
+            text: root.downloaded_text;
             font-size: 11px;
             color: root.is_active ? #71717a : #52525b;
             vertical-alignment: center;
+        }
+    }
+}
+
+// A header label that sorts its column when clicked or activated from the keyboard.
+component HeaderCell inherits Rectangle {
+    in property <string> label;
+    in property <int> column;
+    in property <bool> active: false;
+    in property <bool> ascending: true;
+    callback clicked(int);
+
+    horizontal-stretch: 1;
+    forward-focus: header_focus;
+    accessible-role: button;
+    accessible-label: "Sort by " + root.label;
+    accessible-action-default => { root.clicked(root.column); }
+
+    HorizontalLayout {
+        alignment: start;
+        spacing: 5px;
+
+        Text {
+            horizontal-stretch: 1;
+            text: root.label;
+            font-size: 11px;
+            font-weight: 600;
+            color: root.active ? #f4f4f5 : #a1a1aa;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        // 1px square bars; the long-to-short order encodes the direction.
+        VerticalLayout {
+            alignment: center;
+            width: 8px;
+            Path {
+                visible: root.active;
+                width: 8px;
+                height: 6px;
+                commands: root.ascending
+                    ? "M 0 0.5 L 8 0.5 M 0 3 L 5 3 M 0 5.5 L 2.5 5.5"
+                    : "M 0 0.5 L 2.5 0.5 M 0 3 L 5 3 M 0 5.5 L 8 5.5";
+                stroke: #f4f4f5;
+                stroke-width: 1px;
+            }
+        }
+    }
+    header_focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                root.clicked(root.column);
+                return accept;
+            }
+            return reject;
+        }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            header_focus.focus();
+            root.clicked(root.column);
         }
     }
 }
@@ -119,16 +182,21 @@ export component DownloadTable inherits ScrollView {
     in property <color> active_status_color: #71717a;
     in property <string> active_time_left: "--:--";
     in property <string> active_transfer_rate: "0 KB/s";
-    in property <string> active_last_try: "Today";
+    in property <string> active_downloaded: "Today";
     in property <int> selected_category: 0;
     in property <int> total_items: 0;
     in property <[TableItem]> sample_downloads: [];
+    // -1 until a header is clicked; then the column index that orders the listed rows.
+    in-out property <int> sort_column: -1;
+    in-out property <bool> sort_ascending: true;
     // Rows paint their focus ring only for keyboard input, so a click selects without a ring.
     private property <bool> keyboard_focused: false;
     callback open_file();
     callback row_selected(int);
     /// Moves the selection by one row: -1 for up, 1 for down.
     callback step_selection(int);
+    /// A sortable header was activated.
+    callback sort_requested(int);
     pure function category_matches(category: int, file_type: string, completed: bool) -> bool {
         return category == 0
             || (category == 1 && file_type == "zip")
@@ -194,12 +262,12 @@ export component DownloadTable inherits ScrollView {
 
                 HorizontalLayout {
                     horizontal-stretch: 3;
-                    Text { text: "File Name"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                    HeaderCell { label: "File Name"; column: 0; active: root.sort_column == 0; ascending: root.sort_ascending; clicked(col) => { root.sort_requested(col); } }
                     Rectangle { width: 1px; background: #27272a; }
                 }
                 HorizontalLayout {
                     width: 125px; padding-left: 6px;
-                    Text { text: "Size"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                    HeaderCell { label: "Size"; column: 1; active: root.sort_column == 1; ascending: root.sort_ascending; clicked(col) => { root.sort_requested(col); } }
                     Rectangle { width: 1px; background: #27272a; }
                 }
                 HorizontalLayout {
@@ -219,7 +287,7 @@ export component DownloadTable inherits ScrollView {
                 }
                 HorizontalLayout {
                     width: 90px; padding-left: 6px;
-                    Text { text: "Last Try Date"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                    HeaderCell { label: "Downloaded"; column: 3; active: root.sort_column == 3; ascending: root.sort_ascending; clicked(col) => { root.sort_requested(col); } }
                 }
             }
         }
@@ -246,7 +314,7 @@ export component DownloadTable inherits ScrollView {
                     status-text: root.active_status;
                     time-left-text: root.active_time_left;
                     transfer-rate-text: root.active_transfer_rate;
-                    last-try-text: root.active_last_try;
+                    downloaded-text: root.active_downloaded;
                     is-active: true;
                     status-color: root.active_status_color;
                 }
@@ -299,7 +367,7 @@ export component DownloadTable inherits ScrollView {
                     status-text: item.status_text;
                     time-left-text: item.time_left_text;
                     transfer-rate-text: item.transfer_rate_text;
-                    last-try-text: item.last_try_text;
+                    downloaded-text: item.downloaded_text;
                 }
                 if self.is_visible: Rectangle { y: parent.height - 1px; height: 1px; background: #27272a; }
             }

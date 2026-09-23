@@ -56,7 +56,7 @@ export component MainWindow inherits Window {
     in-out property <color> active_status_color: #71717a;
     in-out property <string> active_time_left: "--:--";
     in-out property <string> active_transfer_rate: "0 KB/s";
-    in-out property <string> active_last_try: "Today";
+    in-out property <string> active_downloaded: "Today";
     in-out property <string> active_error_message: "";
     in-out property <string> action_error_message: "";
     pure function category_matches(category: int, file_type: string, completed: bool) -> bool {
@@ -69,20 +69,28 @@ export component MainWindow inherits Window {
             || (category == 6 && !completed)
             || (category == 7 && completed);
     }
-    out property <bool> active_row_visible: root.has_active_download && root.category_matches(
-        root.selected_category, root.active_file_type, root.is_completed);
+    // The active download keeps the separate top row only while it is unfinished. Once it
+    // finishes it is listed as a normal, sortable row instead.
+    out property <bool> current_unfinished: root.has_active_download && !root.is_completed;
+    out property <bool> active_row_visible: root.current_unfinished && root.category_matches(
+        root.selected_category, root.active_file_type, false);
     out property <bool> can_resume: !root.show_duplicate_dialog && root.active_row_visible && root.selected_row == 0 && root.is_paused;
     out property <bool> can_stop: !root.show_duplicate_dialog && root.active_row_visible && root.selected_row == 0 && root.is_downloading;
     out property <bool> can_stop_all: !root.show_duplicate_dialog && root.has_active_download && root.is_downloading;
     in-out property <bool> history_row_selected: false;
+    // The finished download the toolbar still holds is also listed in the table. Deleting its
+    // row clears this, so the two delete paths agree on what still exists.
+    in-out property <bool> completed_listed: false;
     out property <bool> can_delete_selected: !root.show_duplicate_dialog && (
         (root.active_row_visible && root.selected_row == 0)
         || (root.history_row_selected && root.selected_row > 0)
     );
-    out property <bool> can_delete_completed: !root.show_duplicate_dialog && root.has_active_download && root.is_completed;
-    out property <int> total_items: root.sample_downloads.length + (root.has_active_download ? 1 : 0);
+    out property <bool> can_delete_completed: !root.show_duplicate_dialog && root.has_active_download && root.is_completed && root.completed_listed;
+    out property <int> total_items: root.sample_downloads.length + (root.current_unfinished ? 1 : 0);
 
     in-out property <[TableItem]> sample_downloads: [];
+    in-out property <int> sort_column: -1;
+    in-out property <bool> sort_ascending: true;
 
     callback start_download();
     callback pause_download();
@@ -99,6 +107,8 @@ export component MainWindow inherits Window {
     /// Opens the file of the selected row: the active download in row 0, or an archived one.
     callback open_file();
     callback row_selected(int);
+    /// A sortable download-table header was activated.
+    callback sort_requested(int);
     /// Moves the selection in the download table by one row.
     callback step_selection(int);
     /// The category changed, so the selected row may no longer be listed.
@@ -166,12 +176,15 @@ export component MainWindow inherits Window {
                 active-status-color: root.active_status_color;
                 active-time-left: root.active_time_left;
                 active-transfer-rate: root.active_transfer_rate;
-                active-last-try: root.active_last_try;
+                active-downloaded: root.active_downloaded;
                 selected-category: root.selected_category;
                 total-items: root.total_items;
                 sample-downloads: root.sample_downloads;
+                sort-column: root.sort_column;
+                sort-ascending: root.sort_ascending;
                 open-file => { root.open_file(); }
                 row-selected(id) => { root.row_selected(id); }
+                sort-requested(column) => { root.sort_requested(column); }
                 step-selection(step) => { root.step_selection(step); }
             }
         }
