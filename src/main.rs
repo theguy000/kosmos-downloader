@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let action_tx = engine.action_tx();
     let snapshot_rx = engine.snapshot_rx();
 
-    run_app(action_tx, snapshot_rx)?;
+    run_app(&action_tx, snapshot_rx)?;
 
     Ok(())
 }

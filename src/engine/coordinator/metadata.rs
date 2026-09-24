@@ -63,7 +63,7 @@ pub(super) fn spawn_info_fetch(
                         Ok(info)
                     }.await;
                     if saved.is_some() && retries < MAX_CHUNK_RETRIES
-                        && attempt.as_ref().is_err_and(|error| error.is_retryable())
+                        && attempt.as_ref().is_err_and(WorkerError::is_retryable)
                     {
                         retries += 1;
                         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -154,8 +154,8 @@ impl Session {
                         path,
                         bytes,
                     })) => {
-                        self.current_filename = filename.clone();
-                        self.current_path = path.clone();
+                        self.current_filename.clone_from(&filename);
+                        self.current_path.clone_from(&path);
                         let existing = ExistingFile {
                             filename,
                             path,

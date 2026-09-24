@@ -317,7 +317,7 @@ fn spawn_history_file_delete(window: slint::Weak<MainWindow>, id: i32, save_path
 }
 
 pub fn run_app(
-    action_tx: mpsc::Sender<DownloadAction>,
+    action_tx: &mpsc::Sender<DownloadAction>,
     snapshot_rx: watch::Receiver<DownloadSnapshot>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let main_window = MainWindow::new()?;
@@ -622,7 +622,6 @@ pub fn run_app(
             };
             let session_id = prompt.session_id;
             let choice = match option {
-                0 => DuplicateChoice::UseExisting,
                 1 => DuplicateChoice::Numbered,
                 2 => {
                     if let Some(entry) = clear_active_completed(&window, &tracker) {

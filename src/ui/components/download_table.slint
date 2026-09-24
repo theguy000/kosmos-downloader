@@ -123,6 +123,7 @@ component DownloadRowColumns inherits HorizontalLayout {
             text: root.time_left_text;
             font-size: 11px;
             color: root.is_active ? #d4d4d8 : #52525b;
+            overflow: elide;
             vertical-alignment: center;
         }
     }
@@ -135,6 +136,7 @@ component DownloadRowColumns inherits HorizontalLayout {
             text: root.transfer_rate_text;
             font-size: 11px;
             color: root.is_active ? #d4d4d8 : #52525b;
+            overflow: elide;
             vertical-alignment: center;
         }
     }
@@ -147,6 +149,7 @@ component DownloadRowColumns inherits HorizontalLayout {
             text: root.downloaded_text;
             font-size: 11px;
             color: root.is_active ? #71717a : #52525b;
+            overflow: elide;
             vertical-alignment: center;
         }
     }
@@ -339,7 +342,7 @@ export component DownloadTable inherits ScrollView {
                 }
                 HorizontalLayout {
                     width: root.col_status_width; padding-left: 6px;
-                    Text { horizontal-stretch: 1; text: "Status"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                    Text { horizontal-stretch: 1; text: "Status"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; overflow: elide; }
                     ColumnResizer {
                         min-column-width: 50px;
                         column-width <=> root.col_status_width;
@@ -348,7 +351,7 @@ export component DownloadTable inherits ScrollView {
                 }
                 HorizontalLayout {
                     width: root.col_time_left_width; padding-left: 6px;
-                    Text { horizontal-stretch: 1; text: "Time left"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                    Text { horizontal-stretch: 1; text: "Time left"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; overflow: elide; }
                     ColumnResizer {
                         min-column-width: 50px;
                         column-width <=> root.col_time_left_width;
@@ -357,7 +360,7 @@ export component DownloadTable inherits ScrollView {
                 }
                 HorizontalLayout {
                     width: root.col_transfer_rate_width; padding-left: 6px;
-                    Text { horizontal-stretch: 1; text: "Transfer rate"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                    Text { horizontal-stretch: 1; text: "Transfer rate"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; overflow: elide; }
                     ColumnResizer {
                         min-column-width: 50px;
                         column-width <=> root.col_transfer_rate_width;

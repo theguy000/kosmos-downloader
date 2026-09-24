@@ -30,7 +30,7 @@ pub fn calculate_chunks(total_size: u64, num_chunks: usize) -> Vec<ChunkRange> {
     let mut current_offset = 0;
 
     for i in 0..k {
-        let extra = if (i as u64) < remainder { 1 } else { 0 };
+        let extra = u64::from((i as u64) < remainder);
         let size = base_size + extra;
         let start = current_offset;
         let end = start + size - 1;
@@ -171,7 +171,7 @@ mod tests {
         assert_eq!(chunks[0].size(), 4);
         assert_eq!(chunks[1].size(), 3);
         assert_eq!(chunks[2].size(), 3);
-        assert_eq!(chunks.iter().map(|c| c.size()).sum::<u64>(), 10);
+        assert_eq!(chunks.iter().map(super::ChunkRange::size).sum::<u64>(), 10);
     }
 
     #[test]
@@ -189,12 +189,12 @@ mod tests {
                 }
 
                 // Check total sum
-                let sum: u64 = chunks.iter().map(|c| c.size()).sum();
+                let sum: u64 = chunks.iter().map(super::ChunkRange::size).sum();
                 assert_eq!(sum, total_size);
 
                 // Check balanced distribution (sizes differ by at most 1)
-                let min_size = chunks.iter().map(|c| c.size()).min().unwrap();
-                let max_size = chunks.iter().map(|c| c.size()).max().unwrap();
+                let min_size = chunks.iter().map(super::ChunkRange::size).min().unwrap();
+                let max_size = chunks.iter().map(super::ChunkRange::size).max().unwrap();
                 assert!(max_size - min_size <= 1);
             }
         }

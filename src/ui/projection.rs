@@ -104,8 +104,7 @@ pub(super) fn sort_items(items: &mut [super::view::TableItem], column: i32, asce
 
 pub(super) fn update_window_state(window: &MainWindow, snap: &DownloadSnapshot) {
     let (is_downloading, is_paused, is_completed) = match &snap.status {
-        DownloadStatus::Connecting => (true, false, false),
-        DownloadStatus::Downloading => (true, false, false),
+        DownloadStatus::Connecting | DownloadStatus::Downloading => (true, false, false),
         DownloadStatus::Paused => (false, true, false),
         DownloadStatus::Completed => (false, false, true),
         DownloadStatus::Failed(_) => (false, snap.resumable, false),

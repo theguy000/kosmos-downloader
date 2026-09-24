@@ -2,6 +2,37 @@
 name = "kosmos-downloader"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.92"
+
+[lints.rust]
+unsafe_code = "warn"
+dead_code = "warn"
+unused_variables = "warn"
+unused_imports = "warn"
+unreachable_code = "warn"
+unreachable_patterns = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -2 }
+# Explicit narrow allowances for UI and download manager numeric conversions
+cast_precision_loss = "allow"       # Display formatting u64 -> f64/f32 for speeds, percentages, and labels
+cast_possible_truncation = "allow"  # Conversion between usize and bounded protocol/UI index types
+cast_sign_loss = "allow"            # Rounding non-negative UI float values to usize
+cast_possible_wrap = "allow"        # Conversion between usize and signed UI model indices
+missing_errors_doc = "allow"        # Internal application crate rather than public library API
+too_many_lines = "allow"            # Long async integration test servers and loop handlers
+struct_field_names = "allow"        # Domain type naming
+module_name_repetitions = "allow"   # Domain type naming
+similar_names = "allow"             # e.g., server_updated vs served_updated in test servers
+float_cmp = "allow"                 # Exact float comparisons in UI slider tests
+must_use_candidate = "allow"        # Internal library functions need not #[must_use] every helper
+items_after_statements = "allow"    # Local test use statements
+manual_let_else = "allow"           # Match statements preferred for readability in error handling
+unreadable_literal = "allow"        # Bitwise masks and hash constants
+ignored_unit_patterns = "allow"     # Explicit discard patterns in select/match
+
+
 
 [dependencies]
 # Using software renderer: no GPU/wgpu/D3D12 stack for lower memory usage.

@@ -229,12 +229,11 @@ impl Session {
 
     /// Applies the remembered decision, or publishes the prompt and waits.
     async fn settle_duplicate(&mut self, pending: PendingDuplicate) {
-        match self.duplicate_preference {
-            Some(choice) => self.apply_duplicate(pending, Some(choice)).await,
-            None => {
-                self.duplicate = Some(pending);
-                self.publish_prompt();
-            }
+        if let Some(choice) = self.duplicate_preference {
+            self.apply_duplicate(pending, Some(choice)).await;
+        } else {
+            self.duplicate = Some(pending);
+            self.publish_prompt();
         }
     }
 
@@ -257,10 +256,10 @@ impl Session {
         choice: Option<DuplicateChoice>,
     ) {
         // An answer for a replaced download must not clear the current prompt.
-        if !self
+        if self
             .duplicate
             .as_ref()
-            .is_some_and(|pending| pending.prompt.session_id == session_id)
+            .is_none_or(|pending| pending.prompt.session_id != session_id)
         {
             return;
         }
@@ -548,8 +547,8 @@ impl Session {
 
     /// Reports an existing file that the engine refuses to reuse or replace.
     fn fail_existing(&mut self, existing: &ExistingFile, reason: &str) {
-        self.current_filename = existing.filename.clone();
-        self.current_path = existing.path.clone();
+        self.current_filename.clone_from(&existing.filename);
+        self.current_path.clone_from(&existing.path);
         self.owns_target = false;
         self.status = DownloadStatus::Failed(format!(
             "Cannot use existing file {}: {reason}. Choose overwrite or a numbered copy instead",

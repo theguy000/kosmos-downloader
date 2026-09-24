@@ -125,7 +125,7 @@ impl Storage {
                     current_offset += bytes_read as u64;
                     remaining = &mut remaining[bytes_read..];
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(error) => return Err(StorageError::Io(error)),
             }
         }
