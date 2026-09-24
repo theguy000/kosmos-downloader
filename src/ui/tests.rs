@@ -6,7 +6,11 @@ use super::projection::{
 };
 use crate::history::{HistoryEntry, HistoryStore, downloaded_label};
 use slint::ComponentHandle;
+use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+use slint::platform::{Clipboard, Platform, WindowAdapter};
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 fn finished_entry(id: i32, filename: &str, total_bytes: u64) -> HistoryEntry {
     HistoryEntry {
@@ -17,6 +21,42 @@ fn finished_entry(id: i32, filename: &str, total_bytes: u64) -> HistoryEntry {
         total_bytes,
         completed_unix_ms: 1_700_000_000_000 + id as u64,
     }
+}
+
+type TestContext = (Rc<MinimalSoftwareWindow>, Rc<RefCell<String>>);
+
+struct TestPlatform(Rc<MinimalSoftwareWindow>, Rc<RefCell<String>>);
+
+impl Platform for TestPlatform {
+    fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
+        Ok(self.0.clone())
+    }
+
+    fn set_clipboard_text(&self, text: &str, clipboard: Clipboard) {
+        if clipboard == Clipboard::DefaultClipboard {
+            *self.1.borrow_mut() = text.into();
+        }
+    }
+
+    fn clipboard_text(&self, clipboard: Clipboard) -> Option<String> {
+        (clipboard == Clipboard::DefaultClipboard).then(|| self.1.borrow().clone())
+    }
+}
+
+thread_local! {
+    static TEST_CONTEXT: RefCell<Option<TestContext>> = const { RefCell::new(None) };
+}
+
+// Slint platforms are thread-local and can only be set once per thread.
+fn install_test_platform() -> Result<TestContext, Box<dyn std::error::Error>> {
+    if let Some((window, clipboard)) = TEST_CONTEXT.with(|slot| slot.borrow().clone()) {
+        return Ok((window, clipboard));
+    }
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
+    let clipboard = Rc::new(RefCell::new(String::new()));
+    slint::platform::set_platform(Box::new(TestPlatform(window.clone(), clipboard.clone())))?;
+    TEST_CONTEXT.with(|slot| *slot.borrow_mut() = Some((window.clone(), clipboard.clone())));
+    Ok((window, clipboard))
 }
 
 #[test]
@@ -86,31 +126,9 @@ fn delete_target_preserves_exact_confirmation_token() {
 
 #[test]
 fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std::error::Error>> {
-    use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
-    use slint::platform::{Clipboard, Platform, PointerEventButton, WindowAdapter, WindowEvent};
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    use slint::platform::{PointerEventButton, WindowEvent};
 
-    struct TestPlatform(Rc<MinimalSoftwareWindow>, Rc<RefCell<String>>);
-    impl Platform for TestPlatform {
-        fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
-            Ok(self.0.clone())
-        }
-
-        fn set_clipboard_text(&self, text: &str, clipboard: Clipboard) {
-            if clipboard == Clipboard::DefaultClipboard {
-                *self.1.borrow_mut() = text.into();
-            }
-        }
-
-        fn clipboard_text(&self, clipboard: Clipboard) -> Option<String> {
-            (clipboard == Clipboard::DefaultClipboard).then(|| self.1.borrow().clone())
-        }
-    }
-
-    let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
-    let clipboard = Rc::new(RefCell::new(String::new()));
-    slint::platform::set_platform(Box::new(TestPlatform(window.clone(), clipboard.clone())))?;
+    let (window, clipboard) = install_test_platform()?;
     let ui = MainWindow::new()?;
     ui.show()?;
     let click = |x, y| {
@@ -1194,6 +1212,7 @@ fn a_missing_file_counts_as_deleted() {
 
 #[test]
 fn test_duplicate_prompt_projection_updates_window() -> Result<(), Box<dyn std::error::Error>> {
+    let _ = install_test_platform()?;
     let ui = MainWindow::new()?;
     assert!(!ui.get_show_duplicate_dialog());
 
@@ -1274,6 +1293,33 @@ fn test_duplicate_prompt_projection_updates_window() -> Result<(), Box<dyn std::
     snap.downloaded_bytes = 4096;
     update_window_state(&ui, &snap);
     assert_eq!(ui.get_active_size(), "4.0 KB");
+
+    Ok(())
+}
+
+#[test]
+fn column_width_defaults_and_save_callback() -> Result<(), Box<dyn std::error::Error>> {
+    let _ = install_test_platform()?;
+    let ui = MainWindow::new()?;
+
+    assert_eq!(ui.get_col_filename_width(), 294.0);
+    assert_eq!(ui.get_col_size_width(), 125.0);
+    assert_eq!(ui.get_col_status_width(), 125.0);
+    assert_eq!(ui.get_col_time_left_width(), 80.0);
+    assert_eq!(ui.get_col_transfer_rate_width(), 90.0);
+    assert_eq!(ui.get_col_date_added_width(), 110.0);
+
+    let saved = std::rc::Rc::new(std::cell::Cell::new(false));
+    let saved_clone = saved.clone();
+    ui.on_save_column_widths(move || {
+        saved_clone.set(true);
+    });
+
+    ui.set_col_filename_width(420.0);
+    assert_eq!(ui.get_col_filename_width(), 420.0);
+
+    ui.invoke_save_column_widths();
+    assert!(saved.get());
 
     Ok(())
 }

@@ -2,6 +2,7 @@ mod app;
 mod format;
 mod platform;
 mod projection;
+mod table_settings;
 #[cfg(test)]
 mod tests;
 mod view;

@@ -3,6 +3,7 @@ use super::projection::{
     category_matches, file_type_from_filename, history_table_item, should_project_snapshot,
     sort_items, update_window_state,
 };
+use super::table_settings::TableColumnWidths;
 use super::view::{MainWindow, TableItem};
 use crate::engine::{DownloadAction, DownloadSnapshot, DownloadStatus, DuplicateChoice};
 use crate::history::{HistoryEntry, HistoryStore, now_unix_ms};
@@ -345,6 +346,50 @@ pub fn run_app(
     main_window.set_sort_column(3);
     main_window.set_sort_ascending(false);
     resort(&download_history, 3, false);
+
+    if let Some(widths) = TableColumnWidths::load() {
+        main_window.set_col_filename_width(widths.filename);
+        main_window.set_col_size_width(widths.size);
+        main_window.set_col_status_width(widths.status);
+        main_window.set_col_time_left_width(widths.time_left);
+        main_window.set_col_transfer_rate_width(widths.transfer_rate);
+        main_window.set_col_date_added_width(widths.date_added);
+    }
+
+    let (column_widths_tx, mut column_widths_rx) = watch::channel(None::<TableColumnWidths>);
+
+    // One writer, so overlapping saves can never race on the same temp file. A watch channel
+    // keeps only the latest widths, so a burst of releases collapses to one save.
+    tokio::spawn(async move {
+        while column_widths_rx.changed().await.is_ok() {
+            let Some(widths) = *column_widths_rx.borrow_and_update() else {
+                continue;
+            };
+            let saved = tokio::task::spawn_blocking(move || widths.save()).await;
+            match saved {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => eprintln!("could not save table column widths: {error}"),
+                Err(error) => eprintln!("table column width save task failed: {error}"),
+            }
+        }
+    });
+
+    {
+        let window_weak = main_window.as_weak();
+        main_window.on_save_column_widths(move || {
+            if let Some(window) = window_weak.upgrade() {
+                let widths = TableColumnWidths {
+                    filename: window.get_col_filename_width(),
+                    size: window.get_col_size_width(),
+                    status: window.get_col_status_width(),
+                    time_left: window.get_col_time_left_width(),
+                    transfer_rate: window.get_col_transfer_rate_width(),
+                    date_added: window.get_col_date_added_width(),
+                };
+                column_widths_tx.send_replace(Some(widths));
+            }
+        });
+    }
 
     {
         let window_weak = main_window.as_weak();

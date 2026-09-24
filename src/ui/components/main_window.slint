@@ -91,7 +91,14 @@ export component MainWindow inherits Window {
     in-out property <[TableItem]> sample_downloads: [];
     in-out property <int> sort_column: -1;
     in-out property <bool> sort_ascending: true;
+    in-out property <length> col_filename_width: 294px;
+    in-out property <length> col_size_width: 125px;
+    in-out property <length> col_status_width: 125px;
+    in-out property <length> col_time_left_width: 80px;
+    in-out property <length> col_transfer_rate_width: 90px;
+    in-out property <length> col_date_added_width: 110px;
 
+    callback save_column_widths();
     callback start_download();
     callback pause_download();
     callback resume_download();
@@ -164,6 +171,13 @@ export component MainWindow inherits Window {
             Rectangle { width: 1px; background: #27272a; }
 
             DownloadTable {
+                col-filename-width <=> root.col_filename_width;
+                col-size-width <=> root.col_size_width;
+                col-status-width <=> root.col_status_width;
+                col-time-left-width <=> root.col_time_left_width;
+                col-transfer-rate-width <=> root.col_transfer_rate_width;
+                col-date-added-width <=> root.col_date_added_width;
+                save-column-widths => { root.save_column_widths(); }
                 active-row-visible: root.active_row_visible;
                 selected-row <=> root.selected_row;
                 is-completed: root.is_completed;

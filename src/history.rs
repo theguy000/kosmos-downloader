@@ -168,10 +168,10 @@ fn temporary_path(path: &Path) -> PathBuf {
 }
 
 fn default_history_path() -> PathBuf {
-    history_directory().join(HISTORY_FILE_NAME)
+    data_directory().join(HISTORY_FILE_NAME)
 }
 
-fn history_directory() -> PathBuf {
+pub(crate) fn data_directory() -> PathBuf {
     if let Some(directory) = environment_path("LOCALAPPDATA") {
         return directory.join(HISTORY_DIRECTORY_NAME);
     }
@@ -200,10 +200,7 @@ pub fn downloaded_label(completed_unix_ms: u64) -> String {
     format_completed_label(completed_unix_ms, chrono::Local::now())
 }
 
-fn format_completed_label(
-    completed_unix_ms: u64,
-    now: chrono::DateTime<chrono::Local>,
-) -> String {
+fn format_completed_label(completed_unix_ms: u64, now: chrono::DateTime<chrono::Local>) -> String {
     use chrono::Datelike;
 
     let Some(completed_utc) = i64::try_from(completed_unix_ms)

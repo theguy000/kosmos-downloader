@@ -16,6 +16,42 @@ export struct TableItem {
     size_bytes: float,
 }
 
+component ColumnResizer inherits Rectangle {
+    in-out property <length> column-width: 0px;
+    in property <length> min-column-width: 50px;
+    callback released();
+
+    property <length> anchor-x: 0px;
+
+    width: 1px;
+    background: resizer_touch.has-hover || resizer_touch.pressed ? #3f3f46 : #27272a;
+
+    resizer_touch := TouchArea {
+        x: -4px;
+        width: 9px;
+        mouse-cursor: ew-resize;
+
+        moved => {
+            if self.pressed {
+                if root.column-width + (self.mouse-x - root.anchor-x) < root.min-column-width {
+                    root.anchor-x = self.mouse-x + root.column-width - root.min-column-width;
+                    root.column-width = root.min-column-width;
+                } else {
+                    root.column-width += self.mouse-x - root.anchor-x;
+                }
+            }
+        }
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                root.anchor-x = self.pressed-x;
+            }
+            if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                root.released();
+            }
+        }
+    }
+}
+
 component DownloadRowColumns inherits HorizontalLayout {
     in property <string> filename;
     in property <string> file_type;
@@ -27,12 +63,20 @@ component DownloadRowColumns inherits HorizontalLayout {
     in property <bool> is_active: false;
     in property <color> status_color: #10b981;
 
+    in property <length> col_filename_width;
+    in property <length> col_size_width;
+    in property <length> col_status_width;
+    in property <length> col_time_left_width;
+    in property <length> col_transfer_rate_width;
+    in property <length> col_date_added_width;
+
+    alignment: start;
     padding-left: 8px;
     padding-right: 8px;
     spacing: 0px;
 
     HorizontalLayout {
-        horizontal-stretch: 3;
+        width: root.col_filename_width;
         spacing: 6px;
         alignment: start;
         FileTypeIcon { file-type: root.file_type; }
@@ -46,7 +90,7 @@ component DownloadRowColumns inherits HorizontalLayout {
     }
 
     HorizontalLayout {
-        width: 125px;
+        width: root.col_size_width;
         padding-left: 6px;
         alignment: start;
         Text {
@@ -59,7 +103,7 @@ component DownloadRowColumns inherits HorizontalLayout {
     }
 
     HorizontalLayout {
-        width: 125px;
+        width: root.col_status_width;
         padding-left: 6px;
         alignment: start;
         Text {
@@ -72,7 +116,7 @@ component DownloadRowColumns inherits HorizontalLayout {
     }
 
     HorizontalLayout {
-        width: 80px;
+        width: root.col_time_left_width;
         padding-left: 6px;
         alignment: start;
         Text {
@@ -84,7 +128,7 @@ component DownloadRowColumns inherits HorizontalLayout {
     }
 
     HorizontalLayout {
-        width: 90px;
+        width: root.col_transfer_rate_width;
         padding-left: 6px;
         alignment: start;
         Text {
@@ -96,7 +140,7 @@ component DownloadRowColumns inherits HorizontalLayout {
     }
 
     HorizontalLayout {
-        width: 110px;
+        width: root.col_date_added_width;
         padding-left: 6px;
         alignment: start;
         Text {
@@ -189,6 +233,19 @@ export component DownloadTable inherits ScrollView {
     // -1 until a header is clicked; then the column index that orders the listed rows.
     in-out property <int> sort_column: -1;
     in-out property <bool> sort_ascending: true;
+    in-out property <length> col_filename_width: 294px;
+    in-out property <length> col_size_width: 125px;
+    in-out property <length> col_status_width: 125px;
+    in-out property <length> col_time_left_width: 80px;
+    in-out property <length> col_transfer_rate_width: 90px;
+    in-out property <length> col_date_added_width: 110px;
+    out property <length> total_columns_width: root.col_filename_width
+        + root.col_size_width
+        + root.col_status_width
+        + root.col_time_left_width
+        + root.col_transfer_rate_width
+        + root.col_date_added_width
+        + 16px;
     // Rows paint their focus ring only for keyboard input, so a click selects without a ring.
     private property <bool> keyboard_focused: false;
     callback open_file();
@@ -197,6 +254,7 @@ export component DownloadTable inherits ScrollView {
     callback step_selection(int);
     /// A sortable header was activated.
     callback sort_requested(int);
+    callback save_column_widths();
     pure function category_matches(category: int, file_type: string, completed: bool) -> bool {
         return category == 0
             || (category == 1 && file_type == "zip")
@@ -208,7 +266,7 @@ export component DownloadTable inherits ScrollView {
             || (category == 7 && completed);
     }
 
-    content-width: max(self.visible-width, 840px);
+    content-width: max(self.visible-width, root.total_columns_width);
     content-height: self.visible-height;
     horizontal-scrollbar-policy: ScrollBarPolicy.as-needed;
     vertical-scrollbar-policy: ScrollBarPolicy.always-off;
@@ -256,38 +314,64 @@ export component DownloadTable inherits ScrollView {
             background: #1f1f23;
 
             HorizontalLayout {
+                alignment: start;
                 padding-left: 8px;
                 padding-right: 8px;
                 spacing: 0px;
 
                 HorizontalLayout {
-                    horizontal-stretch: 3;
+                    width: root.col_filename_width;
                     HeaderCell { label: "File Name"; column: 0; active: root.sort_column == 0; ascending: root.sort_ascending; clicked(col) => { root.sort_requested(col); } }
-                    Rectangle { width: 1px; background: #27272a; }
+                    ColumnResizer {
+                        min-column-width: 80px;
+                        column-width <=> root.col_filename_width;
+                        released => { root.save_column_widths(); }
+                    }
                 }
                 HorizontalLayout {
-                    width: 125px; padding-left: 6px;
+                    width: root.col_size_width; padding-left: 6px;
                     HeaderCell { label: "Size"; column: 1; active: root.sort_column == 1; ascending: root.sort_ascending; clicked(col) => { root.sort_requested(col); } }
-                    Rectangle { width: 1px; background: #27272a; }
+                    ColumnResizer {
+                        min-column-width: 50px;
+                        column-width <=> root.col_size_width;
+                        released => { root.save_column_widths(); }
+                    }
                 }
                 HorizontalLayout {
-                    width: 125px; padding-left: 6px;
-                    Text { text: "Status"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
-                    Rectangle { width: 1px; background: #27272a; }
+                    width: root.col_status_width; padding-left: 6px;
+                    Text { horizontal-stretch: 1; text: "Status"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                    ColumnResizer {
+                        min-column-width: 50px;
+                        column-width <=> root.col_status_width;
+                        released => { root.save_column_widths(); }
+                    }
                 }
                 HorizontalLayout {
-                    width: 80px; padding-left: 6px;
-                    Text { text: "Time left"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
-                    Rectangle { width: 1px; background: #27272a; }
+                    width: root.col_time_left_width; padding-left: 6px;
+                    Text { horizontal-stretch: 1; text: "Time left"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                    ColumnResizer {
+                        min-column-width: 50px;
+                        column-width <=> root.col_time_left_width;
+                        released => { root.save_column_widths(); }
+                    }
                 }
                 HorizontalLayout {
-                    width: 90px; padding-left: 6px;
-                    Text { text: "Transfer rate"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
-                    Rectangle { width: 1px; background: #27272a; }
+                    width: root.col_transfer_rate_width; padding-left: 6px;
+                    Text { horizontal-stretch: 1; text: "Transfer rate"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; }
+                    ColumnResizer {
+                        min-column-width: 50px;
+                        column-width <=> root.col_transfer_rate_width;
+                        released => { root.save_column_widths(); }
+                    }
                 }
                 HorizontalLayout {
-                    width: 110px; padding-left: 6px;
+                    width: root.col_date_added_width; padding-left: 6px;
                     HeaderCell { label: "Date Added"; column: 3; active: root.sort_column == 3; ascending: root.sort_ascending; clicked(col) => { root.sort_requested(col); } }
+                    ColumnResizer {
+                        min-column-width: 50px;
+                        column-width <=> root.col_date_added_width;
+                        released => { root.save_column_widths(); }
+                    }
                 }
             }
         }
@@ -317,6 +401,12 @@ export component DownloadTable inherits ScrollView {
                     downloaded-text: root.active_downloaded;
                     is-active: true;
                     status-color: root.active_status_color;
+                    col-filename-width: root.col_filename_width;
+                    col-size-width: root.col_size_width;
+                    col-status-width: root.col_status_width;
+                    col-time-left-width: root.col_time_left_width;
+                    col-transfer-rate-width: root.col_transfer_rate_width;
+                    col-date-added-width: root.col_date_added_width;
                 }
                 Rectangle { y: parent.height - 1px; height: 1px; background: #27272a; }
                 act_t := TouchArea {
@@ -368,6 +458,12 @@ export component DownloadTable inherits ScrollView {
                     time-left-text: item.time_left_text;
                     transfer-rate-text: item.transfer_rate_text;
                     downloaded-text: item.downloaded_text;
+                    col-filename-width: root.col_filename_width;
+                    col-size-width: root.col_size_width;
+                    col-status-width: root.col_status_width;
+                    col-time-left-width: root.col_time_left_width;
+                    col-transfer-rate-width: root.col_transfer_rate_width;
+                    col-date-added-width: root.col_date_added_width;
                 }
                 if self.is_visible: Rectangle { y: parent.height - 1px; height: 1px; background: #27272a; }
             }
