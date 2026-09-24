@@ -195,18 +195,37 @@ pub fn now_unix_ms() -> u64 {
         })
 }
 
-/// Local time of `completed_unix_ms`, as shown in the Downloaded column.
+/// Local time of `completed_unix_ms`, as shown in the Date Added column.
 pub fn downloaded_label(completed_unix_ms: u64) -> String {
-    i64::try_from(completed_unix_ms)
+    format_completed_label(completed_unix_ms, chrono::Local::now())
+}
+
+fn format_completed_label(
+    completed_unix_ms: u64,
+    now: chrono::DateTime<chrono::Local>,
+) -> String {
+    use chrono::Datelike;
+
+    let Some(completed_utc) = i64::try_from(completed_unix_ms)
         .ok()
         .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
-        .map(|completed| {
-            completed
-                .with_timezone(&chrono::Local)
-                .format("%Y-%m-%d %H:%M")
-                .to_string()
-        })
-        .unwrap_or_else(|| "Unknown".to_string())
+    else {
+        return "Unknown".to_string();
+    };
+
+    let local = completed_utc.with_timezone(&chrono::Local);
+    let local_date = local.date_naive();
+    let today = now.date_naive();
+
+    if local_date == today {
+        local.format("Today %H:%M").to_string()
+    } else if Some(local_date) == today.pred_opt() {
+        local.format("Yesterday %H:%M").to_string()
+    } else if local.year() == now.year() {
+        local.format("%b %d %H:%M").to_string()
+    } else {
+        local.format("%b %d, %Y").to_string()
+    }
 }
 
 #[cfg(test)]

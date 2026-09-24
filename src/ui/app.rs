@@ -341,7 +341,7 @@ pub fn run_app(
     let history_tracker = Rc::new(RefCell::new(HistoryTracker::new(
         history_store.borrow().next_id(),
     )));
-    // Default sort: Downloaded, newest first.
+    // Default sort: Date Added, newest first.
     main_window.set_sort_column(3);
     main_window.set_sort_ascending(false);
     resort(&download_history, 3, false);

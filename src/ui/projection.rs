@@ -78,7 +78,7 @@ pub(super) fn history_table_item(entry: &HistoryEntry) -> super::view::TableItem
 }
 
 /// Reorders the listed rows for a header sort. Columns 0, 1 and 3 are sortable (File Name,
-/// Size, Downloaded); any other column leaves the order untouched. Ties keep a stable order
+/// Size, Date Added); any other column leaves the order untouched. Ties keep a stable order
 /// by row id.
 pub(super) fn sort_items(items: &mut [super::view::TableItem], column: i32, ascending: bool) {
     use std::cmp::Ordering;
@@ -91,11 +91,9 @@ pub(super) fn sort_items(items: &mut [super::view::TableItem], column: i32, asce
                 .unwrap_or(Ordering::Equal)
                 .then_with(|| a.id.cmp(&b.id))
         }),
-        3 => items.sort_by(|a, b| {
-            a.downloaded_text
-                .cmp(&b.downloaded_text)
-                .then_with(|| a.id.cmp(&b.id))
-        }),
+        // ponytail: history IDs strictly increment with completion order; sorting by id avoids
+        // adding a timestamp field to TableItem.
+        3 => items.sort_by_key(|a| a.id),
         _ => return,
     }
 

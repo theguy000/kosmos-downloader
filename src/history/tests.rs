@@ -276,12 +276,43 @@ fn rejected_records_are_ignored() {
 }
 
 #[test]
-fn downloaded_label_reports_local_time_and_rejects_out_of_range() {
-    let label = downloaded_label(1_700_000_000_000);
-    assert_eq!(label.len(), "2023-11-14 22:13".len());
-    assert_eq!(label.as_bytes()[4], b'-');
-    assert_eq!(label.as_bytes()[10], b' ');
-    assert_eq!(label.as_bytes()[13], b':');
+fn downloaded_label_reports_smart_relative_time_and_rejects_out_of_range() {
+    use super::format_completed_label;
+    use chrono::TimeZone;
+
+    let now = chrono::Local
+        .with_ymd_and_hms(2026, 9, 24, 15, 30, 0)
+        .unwrap();
+
+    let today_ts = chrono::Local
+        .with_ymd_and_hms(2026, 9, 24, 11, 4, 0)
+        .unwrap()
+        .timestamp_millis() as u64;
+    assert_eq!(format_completed_label(today_ts, now), "Today 11:04");
+
+    let yesterday_ts = chrono::Local
+        .with_ymd_and_hms(2026, 9, 23, 11, 2, 0)
+        .unwrap()
+        .timestamp_millis() as u64;
+    assert_eq!(format_completed_label(yesterday_ts, now), "Yesterday 11:02");
+
+    let earlier_this_year_ts = chrono::Local
+        .with_ymd_and_hms(2026, 5, 10, 9, 15, 0)
+        .unwrap()
+        .timestamp_millis() as u64;
+    assert_eq!(
+        format_completed_label(earlier_this_year_ts, now),
+        "May 10 09:15"
+    );
+
+    let previous_year_ts = chrono::Local
+        .with_ymd_and_hms(2025, 12, 1, 8, 0, 0)
+        .unwrap()
+        .timestamp_millis() as u64;
+    assert_eq!(
+        format_completed_label(previous_year_ts, now),
+        "Dec 01, 2025"
+    );
 
     assert_eq!(downloaded_label(u64::MAX), "Unknown");
     assert!(now_unix_ms() > 1_600_000_000_000);

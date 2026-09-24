@@ -96,7 +96,7 @@ component DownloadRowColumns inherits HorizontalLayout {
     }
 
     HorizontalLayout {
-        width: 90px;
+        width: 110px;
         padding-left: 6px;
         alignment: start;
         Text {
@@ -208,7 +208,7 @@ export component DownloadTable inherits ScrollView {
             || (category == 7 && completed);
     }
 
-    content-width: max(self.visible-width, 820px);
+    content-width: max(self.visible-width, 840px);
     content-height: self.visible-height;
     horizontal-scrollbar-policy: ScrollBarPolicy.as-needed;
     vertical-scrollbar-policy: ScrollBarPolicy.always-off;
@@ -286,8 +286,8 @@ export component DownloadTable inherits ScrollView {
                     Rectangle { width: 1px; background: #27272a; }
                 }
                 HorizontalLayout {
-                    width: 90px; padding-left: 6px;
-                    HeaderCell { label: "Downloaded"; column: 3; active: root.sort_column == 3; ascending: root.sort_ascending; clicked(col) => { root.sort_requested(col); } }
+                    width: 110px; padding-left: 6px;
+                    HeaderCell { label: "Date Added"; column: 3; active: root.sort_column == 3; ascending: root.sort_ascending; clicked(col) => { root.sort_requested(col); } }
                 }
             }
         }
