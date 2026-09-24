@@ -1302,12 +1302,12 @@ fn column_width_defaults_and_save_callback() -> Result<(), Box<dyn std::error::E
     let _ = install_test_platform()?;
     let ui = MainWindow::new()?;
 
-    assert_eq!(ui.get_col_filename_width(), 294.0);
-    assert_eq!(ui.get_col_size_width(), 125.0);
-    assert_eq!(ui.get_col_status_width(), 125.0);
-    assert_eq!(ui.get_col_time_left_width(), 80.0);
-    assert_eq!(ui.get_col_transfer_rate_width(), 90.0);
-    assert_eq!(ui.get_col_date_added_width(), 110.0);
+    assert_eq!(ui.get_col_filename_width(), 292.0);
+    assert_eq!(ui.get_col_size_width(), 72.0);
+    assert_eq!(ui.get_col_status_width(), 65.0);
+    assert_eq!(ui.get_col_time_left_width(), 121.0);
+    assert_eq!(ui.get_col_transfer_rate_width(), 95.0);
+    assert_eq!(ui.get_col_date_added_width(), 96.0);
 
     let saved = std::rc::Rc::new(std::cell::Cell::new(false));
     let saved_clone = saved.clone();

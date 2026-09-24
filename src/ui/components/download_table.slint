@@ -236,12 +236,12 @@ export component DownloadTable inherits ScrollView {
     // -1 until a header is clicked; then the column index that orders the listed rows.
     in-out property <int> sort_column: -1;
     in-out property <bool> sort_ascending: true;
-    in-out property <length> col_filename_width: 294px;
-    in-out property <length> col_size_width: 125px;
-    in-out property <length> col_status_width: 125px;
-    in-out property <length> col_time_left_width: 80px;
-    in-out property <length> col_transfer_rate_width: 90px;
-    in-out property <length> col_date_added_width: 110px;
+    in-out property <length> col_filename_width: 292px;
+    in-out property <length> col_size_width: 72px;
+    in-out property <length> col_status_width: 65px;
+    in-out property <length> col_time_left_width: 121px;
+    in-out property <length> col_transfer_rate_width: 95px;
+    in-out property <length> col_date_added_width: 96px;
     out property <length> total_columns_width: root.col_filename_width
         + root.col_size_width
         + root.col_status_width
