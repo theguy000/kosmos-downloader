@@ -28,6 +28,8 @@ export component MainWindow inherits Window {
     in-out property <bool> show_add_dialog: false;
     in-out property <bool> show_options_dialog: false;
     in-out property <int> options_selected_tab: 0;
+    in-out property <bool> options_launch_on_startup: false;
+    in-out property <bool> startup_option_visible: false;
     in-out property <bool> show_delete_dialog: false;
     in-out property <bool> show_duplicate_dialog: false;
     in-out property <string> duplicate_url: "";
@@ -100,6 +102,8 @@ export component MainWindow inherits Window {
     in-out property <length> col_date_added_width: 96px;
 
     callback save_column_widths();
+    callback options_opened();
+    callback commit_options(bool);
     callback start_download();
     callback pause_download();
     callback resume_download();
@@ -123,6 +127,7 @@ export component MainWindow inherits Window {
     callback selected_category_changed();
 
     changed selected_category => { root.selected_category_changed(); }
+    changed show_options_dialog => { if (root.show_options_dialog) { root.options_opened(); } }
 
     public function close-delete-dialog() {
         root.show_delete_dialog = false;
@@ -230,6 +235,13 @@ export component MainWindow inherits Window {
 
     if root.show_options_dialog: OptionsDialog {
         selected-tab <=> root.options_selected_tab;
+        launch-on-startup <=> root.options_launch_on_startup;
+        startup-option-visible: root.startup_option_visible;
+        confirm(from_keyboard) => {
+            root.show_options_dialog = false;
+            root.commit_options(root.options_launch_on_startup);
+            if from_keyboard { toolbar.focus-options(); }
+        }
         dismiss(from_keyboard) => {
             root.show_options_dialog = false;
             if from_keyboard { toolbar.focus-options(); }

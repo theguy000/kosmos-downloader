@@ -81,9 +81,8 @@ impl Storage {
     /// Writes data directly at the specified byte offset.
     /// Thread-safe and lock-free across concurrent worker threads.
     pub fn write_at(&self, mut offset: u64, mut data: &[u8]) -> Result<(), StorageError> {
-        use std::os::windows::fs::FileExt;
         while !data.is_empty() {
-            let written = self.file.seek_write(data, offset)?;
+            let written = write_at_offset(&self.file, data, offset)?;
             if written == 0 {
                 return Err(StorageError::ZeroWrite);
             }
@@ -108,12 +107,10 @@ impl Storage {
             ))
         })?;
 
-        use std::os::windows::fs::FileExt;
-
         let mut current_offset = offset;
         let mut remaining = data;
         while !remaining.is_empty() {
-            match self.file.seek_read(remaining, current_offset) {
+            match read_at_offset(&self.file, remaining, current_offset) {
                 Ok(0) => {
                     return Err(StorageError::Io(std::io::Error::new(
                         std::io::ErrorKind::UnexpectedEof,
@@ -141,6 +138,30 @@ impl Storage {
     pub fn set_len(&self, len: u64) -> Result<(), StorageError> {
         self.file.set_len(len).map_err(StorageError::Io)
     }
+}
+
+#[cfg(windows)]
+fn write_at_offset(file: &std::fs::File, data: &[u8], offset: u64) -> std::io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    file.seek_write(data, offset)
+}
+
+#[cfg(unix)]
+fn write_at_offset(file: &std::fs::File, data: &[u8], offset: u64) -> std::io::Result<usize> {
+    use std::os::unix::fs::FileExt;
+    file.write_at(data, offset)
+}
+
+#[cfg(windows)]
+fn read_at_offset(file: &std::fs::File, data: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    file.seek_read(data, offset)
+}
+
+#[cfg(unix)]
+fn read_at_offset(file: &std::fs::File, data: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    use std::os::unix::fs::FileExt;
+    file.read_at(data, offset)
 }
 
 #[cfg(test)]

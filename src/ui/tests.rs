@@ -1194,6 +1194,60 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
 }
 
 #[test]
+fn options_startup_checkbox_commits_on_ok() -> Result<(), Box<dyn std::error::Error>> {
+    use slint::platform::WindowEvent;
+
+    let (window, _clipboard) = install_test_platform()?;
+    let ui = MainWindow::new()?;
+    ui.show()?;
+    window.set_size(slint::PhysicalSize::new(960, 540));
+
+    let commits = Rc::new(RefCell::new(Vec::new()));
+    ui.on_commit_options({
+        let commits = commits.clone();
+        move |enabled| commits.borrow_mut().push(enabled)
+    });
+
+    let render = || {
+        window.draw_if_needed(|renderer| {
+            let mut pixels = vec![slint::Rgb8Pixel::default(); 960 * 540];
+            renderer.render(&mut pixels, 960);
+        });
+    };
+    let press = |text: slint::SharedString| {
+        window.dispatch_event(WindowEvent::KeyPressed { text });
+    };
+
+    ui.set_startup_option_visible(true);
+    ui.set_show_options_dialog(true);
+    render();
+
+    press(slint::platform::Key::Tab.into());
+    press(slint::platform::Key::Tab.into());
+    press(" ".into());
+    assert!(ui.get_options_launch_on_startup());
+    press(slint::platform::Key::Tab.into());
+    press(slint::platform::Key::Return.into());
+    assert!(!ui.get_show_options_dialog());
+    assert_eq!(*commits.borrow(), vec![true], "OK commits the change");
+
+    ui.set_show_options_dialog(true);
+    render();
+    press(slint::platform::Key::Tab.into());
+    press(slint::platform::Key::Tab.into());
+    press(" ".into());
+    assert!(
+        !ui.get_options_launch_on_startup(),
+        "the checkbox toggles back off"
+    );
+    press(slint::platform::Key::Escape.into());
+    assert!(!ui.get_show_options_dialog());
+    assert_eq!(*commits.borrow(), vec![true], "Escape discards the change");
+
+    Ok(())
+}
+
+#[test]
 fn a_missing_file_counts_as_deleted() {
     use std::io::{Error, ErrorKind};
 

@@ -1,4 +1,6 @@
-use super::platform::{default_download_directory, open_file};
+use super::platform::{
+    default_download_directory, open_file, set_startup_enabled, startup_enabled,
+};
 use super::projection::{
     category_matches, file_type_from_filename, history_table_item, should_project_snapshot,
     sort_items, update_window_state,
@@ -326,6 +328,56 @@ pub fn run_app(
 
     let default_dir = default_download_directory();
     main_window.set_dest_dir_text(default_dir.to_string_lossy().into_owned().into());
+    main_window.set_startup_option_visible(cfg!(windows));
+
+    {
+        let window_weak = main_window.as_weak();
+        main_window.on_options_opened(move || {
+            let window_weak = window_weak.clone();
+            tokio::spawn(async move {
+                let enabled = tokio::task::spawn_blocking(startup_enabled)
+                    .await
+                    .unwrap_or_default();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(window) = window_weak.upgrade() {
+                        window.set_options_launch_on_startup(enabled);
+                    }
+                });
+            });
+        });
+    }
+
+    {
+        let window_weak = main_window.as_weak();
+        main_window.on_commit_options(move |enabled| {
+            let window_weak = window_weak.clone();
+            tokio::spawn(async move {
+                let outcome = tokio::task::spawn_blocking(move || {
+                    set_startup_enabled(enabled).map_err(|error| {
+                        (
+                            format!("Could not update the startup setting: {error}"),
+                            startup_enabled(),
+                        )
+                    })
+                })
+                .await
+                .unwrap_or_else(|error| {
+                    Err((
+                        format!("Could not update the startup setting: {error}"),
+                        enabled,
+                    ))
+                });
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(window) = window_weak.upgrade()
+                        && let Err((message, actual)) = outcome
+                    {
+                        window.set_options_launch_on_startup(actual);
+                        window.set_action_error_message(message.into());
+                    }
+                });
+            });
+        });
+    }
 
     let download_history = Rc::new(slint::VecModel::<TableItem>::default());
     // Downloads kept from earlier sessions are listed before the window is shown.
