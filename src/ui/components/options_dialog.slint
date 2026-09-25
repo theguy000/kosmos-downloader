@@ -174,10 +174,16 @@ export component OptionsDialog inherits Rectangle {
                     vertical-stretch: 1;
                     background: Palette.background;
 
-                    startup_box := DialogCheckBox {
-                        visible: root.startup_stop;
-                        checked <=> root.launch_on_startup;
-                        text: "Launch Kosmos Downloader on startup";
+                    VerticalLayout {
+                        alignment: start;
+                        padding: 16px;
+                        spacing: 8px;
+
+                        startup_box := DialogCheckBox {
+                            visible: root.startup_stop;
+                            checked <=> root.launch_on_startup;
+                            text: "Launch Kosmos Downloader on startup";
+                        }
                     }
                 }
 
