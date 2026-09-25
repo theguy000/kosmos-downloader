@@ -1,3 +1,4 @@
+import { Palette } from "theme.slint";
 import { CategoryRow, FocusStyle } from "controls.slint";
 import {
     IconArchive,
@@ -19,7 +20,7 @@ export component CategorySidebar inherits Rectangle {
     in-out property <bool> collapsed: false;
 
     width: root.collapsed ? 28px : 200px;
-    background: #18181b;
+    background: Palette.background;
 
     VerticalLayout {
         padding: 0px;
@@ -27,7 +28,7 @@ export component CategorySidebar inherits Rectangle {
 
         Rectangle {
             height: 25px;
-            background: #202024;
+            background: Palette.surface-alt;
 
             if !root.collapsed: Text {
                 x: 10px;
@@ -37,7 +38,7 @@ export component CategorySidebar inherits Rectangle {
                 text: "Categories";
                 font-size: 11px;
                 font-weight: 600;
-                color: #a1a1aa;
+                color: Palette.text-muted;
                 vertical-alignment: center;
                 overflow: elide;
             }
@@ -47,7 +48,7 @@ export component CategorySidebar inherits Rectangle {
                 y: (parent.height - self.height) / 2;
                 width: 20px;
                 height: 20px;
-                background: btn_touch.pressed ? #34343b : (btn_touch.has-hover ? #2b2b30 : transparent);
+                background: btn_touch.pressed ? Palette.control-pressed : (btn_touch.has-hover ? Palette.control : transparent);
                 border-width: btn_focus.has-focus ? 1px : 0px;
                 border-color: FocusStyle.ring;
                 forward-focus: btn_focus;
@@ -58,7 +59,7 @@ export component CategorySidebar inherits Rectangle {
                     collapsed: root.collapsed;
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
-                    stroke: btn_touch.has-hover ? #f4f4f5 : #a1a1aa;
+                    stroke: btn_touch.has-hover ? Palette.text-primary : Palette.text-muted;
                 }
 
                 btn_focus := FocusScope {
@@ -80,7 +81,7 @@ export component CategorySidebar inherits Rectangle {
             }
         }
 
-        Rectangle { height: 1px; background: #27272a; }
+        Rectangle { height: 1px; background: Palette.border; }
 
         if !root.collapsed: VerticalLayout {
             padding: 6px;
@@ -149,7 +150,7 @@ export component CategorySidebar inherits Rectangle {
 
             Rectangle {
                 height: 6px;
-                Rectangle { x: 24px; y: 3px; width: parent.width - 32px; height: 1px; background: #2e2e34; }
+                Rectangle { x: 24px; y: 3px; width: parent.width - 32px; height: 1px; background: Palette.separator; }
             }
 
             CategoryRow {
@@ -168,7 +169,7 @@ export component CategorySidebar inherits Rectangle {
 
             Rectangle {
                 height: 6px;
-                Rectangle { x: 24px; y: 3px; width: parent.width - 32px; height: 1px; background: #2e2e34; }
+                Rectangle { x: 24px; y: 3px; width: parent.width - 32px; height: 1px; background: Palette.separator; }
             }
 
             CategoryRow {

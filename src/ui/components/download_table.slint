@@ -1,3 +1,4 @@
+import { Palette } from "theme.slint";
 import { FocusStyle } from "controls.slint";
 import { FileTypeIcon } from "icons.slint";
 import { PausedTransferDetails } from "transfer_details.slint";
@@ -24,7 +25,7 @@ component ColumnResizer inherits Rectangle {
     property <length> anchor-x: 0px;
 
     width: 1px;
-    background: resizer_touch.has-hover || resizer_touch.pressed ? #3f3f46 : #27272a;
+    background: resizer_touch.has-hover || resizer_touch.pressed ? Palette.border-strong : Palette.border;
 
     resizer_touch := TouchArea {
         x: -4px;
@@ -61,7 +62,7 @@ component DownloadRowColumns inherits HorizontalLayout {
     in property <string> transfer_rate_text;
     in property <string> downloaded_text;
     in property <bool> is_active: false;
-    in property <color> status_color: #10b981;
+    in property <color> status_color: Palette.success;
 
     in property <length> col_filename_width;
     in property <length> col_size_width;
@@ -83,7 +84,7 @@ component DownloadRowColumns inherits HorizontalLayout {
         Text {
             text: root.filename;
             font-size: 11px;
-            color: root.is_active ? #f4f4f5 : #d4d4d8;
+            color: root.is_active ? Palette.text-primary : Palette.text-secondary;
             overflow: elide;
             vertical-alignment: center;
         }
@@ -96,7 +97,7 @@ component DownloadRowColumns inherits HorizontalLayout {
         Text {
             text: root.size_text;
             font-size: 11px;
-            color: root.is_active ? #d4d4d8 : #71717a;
+            color: root.is_active ? Palette.text-secondary : Palette.text-faint;
             overflow: elide;
             vertical-alignment: center;
         }
@@ -122,7 +123,7 @@ component DownloadRowColumns inherits HorizontalLayout {
         Text {
             text: root.time_left_text;
             font-size: 11px;
-            color: root.is_active ? #d4d4d8 : #52525b;
+            color: root.is_active ? Palette.text-secondary : Palette.text-inactive;
             overflow: elide;
             vertical-alignment: center;
         }
@@ -135,7 +136,7 @@ component DownloadRowColumns inherits HorizontalLayout {
         Text {
             text: root.transfer_rate_text;
             font-size: 11px;
-            color: root.is_active ? #d4d4d8 : #52525b;
+            color: root.is_active ? Palette.text-secondary : Palette.text-inactive;
             overflow: elide;
             vertical-alignment: center;
         }
@@ -148,7 +149,7 @@ component DownloadRowColumns inherits HorizontalLayout {
         Text {
             text: root.downloaded_text;
             font-size: 11px;
-            color: root.is_active ? #71717a : #52525b;
+            color: root.is_active ? Palette.text-faint : Palette.text-inactive;
             overflow: elide;
             vertical-alignment: center;
         }
@@ -178,7 +179,7 @@ component HeaderCell inherits Rectangle {
             text: root.label;
             font-size: 11px;
             font-weight: 600;
-            color: #a1a1aa;
+            color: Palette.text-muted;
             vertical-alignment: center;
             overflow: elide;
         }
@@ -193,7 +194,7 @@ component HeaderCell inherits Rectangle {
                 commands: root.ascending
                     ? "M 0 0.5 L 8 0.5 M 0 3 L 5 3 M 0 5.5 L 2.5 5.5"
                     : "M 0 0.5 L 2.5 0.5 M 0 3 L 5 3 M 0 5.5 L 8 5.5";
-                stroke: #f4f4f5;
+                stroke: Palette.text-primary;
                 stroke-width: 1px;
             }
         }
@@ -226,7 +227,7 @@ export component DownloadTable inherits ScrollView {
     in property <string> active_file_type: "doc";
     in property <string> active_size: "0 B";
     in property <string> active_status: "Idle";
-    in property <color> active_status_color: #71717a;
+    in property <color> active_status_color: Palette.text-faint;
     in property <string> active_time_left: "--:--";
     in property <string> active_transfer_rate: "0 KB/s";
     in property <string> active_downloaded: "Today";
@@ -277,7 +278,7 @@ export component DownloadTable inherits ScrollView {
     Rectangle {
         width: root.content-width;
         height: root.content-height;
-        background: #141416;
+        background: Palette.surface-sunken;
 
         // The list is one keyboard stop, so the arrows move the selection through the rows.
         list_focus := FocusScope {
@@ -314,7 +315,7 @@ export component DownloadTable inherits ScrollView {
 
         Rectangle {
             height: 25px;
-            background: #1f1f23;
+            background: Palette.surface;
 
             HorizontalLayout {
                 alignment: start;
@@ -342,7 +343,7 @@ export component DownloadTable inherits ScrollView {
                 }
                 HorizontalLayout {
                     width: root.col_status_width; padding-left: 6px;
-                    Text { horizontal-stretch: 1; text: "Status"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; overflow: elide; }
+                    Text { horizontal-stretch: 1; text: "Status"; font-size: 11px; font-weight: 600; color: Palette.text-muted; vertical-alignment: center; overflow: elide; }
                     ColumnResizer {
                         min-column-width: 50px;
                         column-width <=> root.col_status_width;
@@ -351,7 +352,7 @@ export component DownloadTable inherits ScrollView {
                 }
                 HorizontalLayout {
                     width: root.col_time_left_width; padding-left: 6px;
-                    Text { horizontal-stretch: 1; text: "Time left"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; overflow: elide; }
+                    Text { horizontal-stretch: 1; text: "Time left"; font-size: 11px; font-weight: 600; color: Palette.text-muted; vertical-alignment: center; overflow: elide; }
                     ColumnResizer {
                         min-column-width: 50px;
                         column-width <=> root.col_time_left_width;
@@ -360,7 +361,7 @@ export component DownloadTable inherits ScrollView {
                 }
                 HorizontalLayout {
                     width: root.col_transfer_rate_width; padding-left: 6px;
-                    Text { horizontal-stretch: 1; text: "Transfer rate"; font-size: 11px; font-weight: 600; color: #a1a1aa; vertical-alignment: center; overflow: elide; }
+                    Text { horizontal-stretch: 1; text: "Transfer rate"; font-size: 11px; font-weight: 600; color: Palette.text-muted; vertical-alignment: center; overflow: elide; }
                     ColumnResizer {
                         min-column-width: 50px;
                         column-width <=> root.col_transfer_rate_width;
@@ -379,7 +380,7 @@ export component DownloadTable inherits ScrollView {
             }
         }
 
-        Rectangle { height: 1px; background: #27272a; }
+        Rectangle { height: 1px; background: Palette.border; }
 
         VerticalLayout {
             padding: 0px;
@@ -387,7 +388,7 @@ export component DownloadTable inherits ScrollView {
 
             if root.active_row_visible: Rectangle {
                 height: 25px;
-                background: root.selected_row == 0 ? #273248 : (act_t.has-hover ? #202024 : #18181b);
+                background: root.selected_row == 0 ? Palette.selection : (act_t.has-hover ? Palette.surface-alt : Palette.background);
                 border-width: list_focus.has-focus && root.keyboard_focused && root.selected_row == 0 ? 1px : 0px;
                 border-color: FocusStyle.ring;
                 accessible-role: button;
@@ -411,7 +412,7 @@ export component DownloadTable inherits ScrollView {
                     col-transfer-rate-width: root.col_transfer_rate_width;
                     col-date-added-width: root.col_date_added_width;
                 }
-                Rectangle { y: parent.height - 1px; height: 1px; background: #27272a; }
+                Rectangle { y: parent.height - 1px; height: 1px; background: Palette.border; }
                 act_t := TouchArea {
                     mouse-cursor: pointer;
                     clicked => {
@@ -434,7 +435,7 @@ export component DownloadTable inherits ScrollView {
                     || (!root.active_row_visible && root.selected_row <= 0 && idx == 0));
 
                 height: self.is_visible ? 25px : 0px;
-                background: root.selected_row == item.id ? #273248 : (s_touch.has-hover ? #202024 : (Math.mod(idx, 2) == 0 ? #141416 : #18181b));
+                background: root.selected_row == item.id ? Palette.selection : (s_touch.has-hover ? Palette.surface-alt : (Math.mod(idx, 2) == 0 ? Palette.surface-sunken : Palette.background));
                 border-width: self.is_focused ? 1px : 0px;
                 border-color: FocusStyle.ring;
                 accessible-role: button;
@@ -468,7 +469,7 @@ export component DownloadTable inherits ScrollView {
                     col-transfer-rate-width: root.col_transfer_rate_width;
                     col-date-added-width: root.col_date_added_width;
                 }
-                if self.is_visible: Rectangle { y: parent.height - 1px; height: 1px; background: #27272a; }
+                if self.is_visible: Rectangle { y: parent.height - 1px; height: 1px; background: Palette.border; }
             }
         }
 
@@ -479,14 +480,14 @@ export component DownloadTable inherits ScrollView {
                 alignment: center;
                 Text {
                     text: root.selected_category == 6 ? "No unfinished downloads" : "No downloads";
-                    color: #d4d4d8;
+                    color: Palette.text-secondary;
                     font-size: 13px;
                     horizontal-alignment: center;
                 }
                 Text {
                     text: root.selected_category == 6 ? "Active, stopped, and failed downloads appear here." :
                         "Choose Add URL to start a download.";
-                    color: #a1a1aa;
+                    color: Palette.text-muted;
                     font-size: 11px;
                     horizontal-alignment: center;
                     wrap: word-wrap;

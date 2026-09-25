@@ -1,3 +1,4 @@
+import { Palette } from "theme.slint";
 import { DialogCheckBox, DialogCloseButton, DialogInput, DialogRadioButton, PointerButton } from "controls.slint";
 
 export component DuplicateDownloadDialog inherits Rectangle {
@@ -27,7 +28,7 @@ export component DuplicateDownloadDialog inherits Rectangle {
         else { remember_box.take-focus(); }
     }
 
-    background: #000000bb;
+    background: Palette.overlay;
     forward-focus: dialog_focus;
     init => { root.focus-item(3); }
 
@@ -91,7 +92,7 @@ export component DuplicateDownloadDialog inherits Rectangle {
             y: (root.height - self.height) / 2;
             width: 500px;
             height: 356px;
-            background: #1f1f23;
+            background: Palette.surface;
             accessible-role: groupbox;
             accessible-label: "Duplicate download link";
 
@@ -106,7 +107,7 @@ export component DuplicateDownloadDialog inherits Rectangle {
                         text: "Duplicate download link";
                         font-size: 14px;
                         font-weight: 600;
-                        color: #f4f4f5;
+                        color: Palette.text-primary;
                         vertical-alignment: center;
                     }
                     Rectangle {}
@@ -130,7 +131,7 @@ export component DuplicateDownloadDialog inherits Rectangle {
                             ? "This file already exists on disk (" + root.existing_size + "). You may choose one of the following options, or press Cancel button to skip the download of this file"
                             : "This file already exists on disk. You may choose one of the following options, or press Cancel button to skip the download of this file");
                     font-size: 12px;
-                    color: #d4d4d8;
+                    color: Palette.text-secondary;
                     wrap: word-wrap;
                 }
 

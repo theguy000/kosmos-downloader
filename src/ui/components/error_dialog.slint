@@ -1,3 +1,4 @@
+import { Palette } from "theme.slint";
 import { PointerButton } from "controls.slint";
 
 export component ErrorDialog inherits Rectangle {
@@ -9,7 +10,7 @@ export component ErrorDialog inherits Rectangle {
         root.active_error_message = "";
     }
 
-    background: #000000bb;
+    background: Palette.overlay;
     forward-focus: dialog_focus;
     init => { ok_button.take-focus(); }
 
@@ -29,7 +30,7 @@ export component ErrorDialog inherits Rectangle {
             y: (parent.height - self.height) / 2;
             width: 440px;
             height: 188px;
-            background: #1f1f23;
+            background: Palette.surface;
             accessible-role: groupbox;
             accessible-label: root.active_error_message != "" ? "Download failed" : "Action unavailable";
 
@@ -42,12 +43,12 @@ export component ErrorDialog inherits Rectangle {
                     text: root.active_error_message != "" ? "Download failed" : "Action unavailable";
                     font-size: 15px;
                     font-weight: 600;
-                    color: #f4f4f5;
+                    color: Palette.text-primary;
                 }
 
                 Text {
                     text: root.action_error_message != "" ? root.action_error_message : root.active_error_message;
-                    color: #d4d4d8;
+                    color: Palette.text-secondary;
                     font-size: 12px;
                     wrap: word-wrap;
                 }

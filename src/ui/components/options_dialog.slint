@@ -1,3 +1,4 @@
+import { Palette } from "theme.slint";
 import { FocusStyle, PointerButton } from "controls.slint";
 
 export component OptionsDialog inherits Rectangle {
@@ -27,7 +28,7 @@ export component OptionsDialog inherits Rectangle {
         else { cancel_button.take-focus(); }
     }
 
-    background: #000000bb;
+    background: Palette.overlay;
     forward-focus: dialog_focus;
     init => { dialog_focus.focus(); }
 
@@ -65,7 +66,7 @@ export component OptionsDialog inherits Rectangle {
             y: (root.height - self.height) / 2;
             width: 560px;
             height: 380px;
-            background: #1f1f23;
+            background: Palette.surface;
             accessible-role: groupbox;
             accessible-label: "Options";
 
@@ -81,7 +82,7 @@ export component OptionsDialog inherits Rectangle {
                         text: "Options";
                         font-size: 15px;
                         font-weight: 600;
-                        color: #f4f4f5;
+                        color: Palette.text-primary;
                         vertical-alignment: center;
                     }
                 }
@@ -89,18 +90,18 @@ export component OptionsDialog inherits Rectangle {
                 // Tab strip
                 Rectangle {
                     height: 32px;
-                    background: #18181b;
+                    background: Palette.background;
 
                     // Top and bottom borders for the strip
-                    Rectangle { y: 0px; height: 1px; background: #27272a; }
-                    Rectangle { y: parent.height - 1px; height: 1px; background: #27272a; }
+                    Rectangle { y: 0px; height: 1px; background: Palette.border; }
+                    Rectangle { y: parent.height - 1px; height: 1px; background: Palette.border; }
 
                     HorizontalLayout {
                         spacing: 0px;
 
                         for name[index] in root.tab_names: Rectangle {
                             horizontal-stretch: 1;
-                            background: root.selected_tab == index ? #27272a : (tab_touch.has-hover ? #202024 : transparent);
+                            background: root.selected_tab == index ? Palette.border : (tab_touch.has-hover ? Palette.surface-alt : transparent);
                             border-width: strip_focus.has-focus && root.keyboard_focused && root.selected_tab == index ? 1px : 0px;
                             border-color: FocusStyle.ring;
                             accessible-role: button;
@@ -116,7 +117,7 @@ export component OptionsDialog inherits Rectangle {
                                 text: name;
                                 font-size: 11px;
                                 font-weight: 400;
-                                color: root.selected_tab == index ? #edf3ff : (tab_touch.has-hover ? #d4d4d8 : #a1a1aa);
+                                color: root.selected_tab == index ? Palette.accent-text : (tab_touch.has-hover ? Palette.text-secondary : Palette.text-muted);
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
                                 overflow: elide;
@@ -128,7 +129,7 @@ export component OptionsDialog inherits Rectangle {
                                 y: 0px;
                                 width: 1px;
                                 height: parent.height;
-                                background: #27272a;
+                                background: Palette.border;
                             }
 
                             if root.selected_tab == index: Rectangle {
@@ -136,7 +137,7 @@ export component OptionsDialog inherits Rectangle {
                                 y: parent.height - 2px;
                                 width: parent.width;
                                 height: 2px;
-                                background: #8ba9d6;
+                                background: Palette.accent;
                             }
 
                             tab_touch := TouchArea {
@@ -164,7 +165,7 @@ export component OptionsDialog inherits Rectangle {
                 // Tab Content (blank placeholder area)
                 Rectangle {
                     vertical-stretch: 1;
-                    background: #18181b;
+                    background: Palette.background;
                 }
 
                 // Footer actions

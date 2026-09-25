@@ -1,9 +1,10 @@
+import { Palette } from "theme.slint";
 import { Slider } from "std-widgets.slint";
 import { IconChevronDown, IconChevronRight, IconClose } from "icons.slint";
 
 // Single focus-indicator color for the whole app.
 export global FocusStyle {
-    out property <color> ring: #8ba9d6;
+    out property <color> ring: Palette.accent;
 }
 
 export component CategoryRow inherits Rectangle {
@@ -25,7 +26,7 @@ export component CategoryRow inherits Rectangle {
     }
 
     height: 26px;
-    background: !root.enabled ? transparent : (root.selected ? #273248 : (touch.has-hover ? #242428 : transparent));
+    background: !root.enabled ? transparent : (root.selected ? Palette.selection : (touch.has-hover ? Palette.hover-subtle : transparent));
     border-width: root.enabled && focus.has-focus ? 1px : 0px;
     border-color: FocusStyle.ring;
     forward-focus: focus;
@@ -38,12 +39,12 @@ export component CategoryRow inherits Rectangle {
         x: 30px; y: 0px;
         width: 1px;
         height: root.last-child ? parent.height / 2 : parent.height;
-        background: #34343b;
+        background: Palette.control-pressed;
     }
     if root.child: Rectangle {
         x: 30px; y: parent.height / 2;
         width: 9px; height: 1px;
-        background: #34343b;
+        background: Palette.control-pressed;
     }
 
     Rectangle {
@@ -63,7 +64,7 @@ export component CategoryRow inherits Rectangle {
         text: root.text;
         font-size: 12px;
         font-weight: 400;
-        color: !root.enabled ? #71717a : (root.selected ? #edf3ff : #c4c4cc);
+        color: !root.enabled ? Palette.text-faint : (root.selected ? Palette.accent-text : Palette.text-dim);
         vertical-alignment: center;
         overflow: elide;
     }
@@ -95,9 +96,9 @@ export component CategoryRow inherits Rectangle {
     if root.expandable: Rectangle {
         x: 0px;
         width: 24px; height: parent.height;
-        background: disclosure.has-hover ? #ffffff0c : transparent;
-        if root.expanded: IconChevronDown { x: 8px; y: 9px; stroke: #a1a1aa; }
-        if !root.expanded: IconChevronRight { x: 8px; y: 9px; stroke: #a1a1aa; }
+        background: disclosure.has-hover ? Palette.hover-overlay : transparent;
+        if root.expanded: IconChevronDown { x: 8px; y: 9px; stroke: Palette.text-muted; }
+        if !root.expanded: IconChevronRight { x: 8px; y: 9px; stroke: Palette.text-muted; }
         disclosure := TouchArea {
             enabled: root.enabled;
             mouse-cursor: pointer;
@@ -114,8 +115,8 @@ export component IdmToolButton inherits Rectangle {
 
     width: 62px;
     height: 48px;
-    background: !root.enabled ? transparent : (touch.pressed ? #34343b :
-        (touch.has-hover ? #2b2b30 : transparent));
+    background: !root.enabled ? transparent : (touch.pressed ? Palette.control-pressed :
+        (touch.has-hover ? Palette.control : transparent));
     border-width: root.enabled && focus.has-focus ? 1px : 0px;
     border-color: FocusStyle.ring;
     forward-focus: focus;
@@ -141,7 +142,7 @@ export component IdmToolButton inherits Rectangle {
         Text {
             text: root.text;
             font-size: 10px;
-            color: !root.enabled ? #71717a : (touch.has-hover ? #f4f4f5 : #d4d4d8);
+            color: !root.enabled ? Palette.text-faint : (touch.has-hover ? Palette.text-primary : Palette.text-secondary);
             horizontal-alignment: center;
             overflow: elide;
         }
@@ -175,12 +176,12 @@ export component PointerButton inherits Rectangle {
 
     width: root.text == "Download" ? 88px : 72px;
     height: 36px;
-    background: !root.enabled ? #303034 : (root.danger ?
-        (touch.pressed ? #991b1b : (touch.has-hover ? #dc2626 : #b91c1c)) :
-        (touch.pressed ? #3b4658 :
-        (root.primary ? (touch.has-hover ? #a7bfe2 : #8ba9d6) :
-        (root.filled ? (touch.has-hover ? #45454d : #36363e) :
-        (touch.has-hover ? #303036 : transparent)))));
+    background: !root.enabled ? Palette.control-disabled : (root.danger ?
+        (touch.pressed ? Palette.danger-pressed : (touch.has-hover ? Palette.danger-hover : Palette.danger)) :
+        (touch.pressed ? Palette.selection-pressed :
+        (root.primary ? (touch.has-hover ? Palette.accent-hover : Palette.accent) :
+        (root.filled ? (touch.has-hover ? Palette.control-strong : Palette.control-filled) :
+        (touch.has-hover ? Palette.control-active : transparent)))));
     forward-focus: focus;
     accessible-role: button;
     accessible-label: root.text;
@@ -202,7 +203,7 @@ export component PointerButton inherits Rectangle {
         text: root.text;
         font-size: 12px;
         font-weight: root.primary ? 600 : 400;
-        color: !root.enabled ? #92929b : (root.primary && !root.danger && !touch.pressed ? #18181b : #f4f4f5);
+        color: !root.enabled ? Palette.text-disabled : (root.primary && !root.danger && !touch.pressed ? Palette.on-accent : Palette.text-primary);
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -230,9 +231,9 @@ export component DialogCloseButton inherits Rectangle {
 
     width: 24px;
     height: 24px;
-    background: touch.pressed ? #34343b : (touch.has-hover ? #2e2e34 : #252529);
+    background: touch.pressed ? Palette.control-pressed : (touch.has-hover ? Palette.separator : Palette.control-raised);
     border-width: 1px;
-    border-color: focus.has-focus || touch.pressed ? FocusStyle.ring : (touch.has-hover ? #71717a : #3f3f46);
+    border-color: focus.has-focus || touch.pressed ? FocusStyle.ring : (touch.has-hover ? Palette.text-faint : Palette.border-strong);
     forward-focus: focus;
     accessible-role: button;
     accessible-label: "Close";
@@ -241,7 +242,7 @@ export component DialogCloseButton inherits Rectangle {
     IconClose {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
-        stroke: touch.has-hover ? #f4f4f5 : #a1a1aa;
+        stroke: touch.has-hover ? Palette.text-primary : Palette.text-muted;
     }
 
     focus := FocusScope {
@@ -267,7 +268,7 @@ export component DialogCheckBox inherits Rectangle {
     public function take-focus() { focus.focus(); }
 
     height: 36px;
-    background: touch.pressed ? #2b2b30 : (touch.has-hover ? #27272a : transparent);
+    background: touch.pressed ? Palette.control : (touch.has-hover ? Palette.border : transparent);
     forward-focus: focus;
     accessible-role: checkbox;
     accessible-label: root.text;
@@ -292,9 +293,9 @@ export component DialogCheckBox inherits Rectangle {
         y: (parent.height - self.height) / 2;
         width: 18px;
         height: 18px;
-        background: root.checked ? #8ba9d6 : #2b2b30;
+        background: root.checked ? Palette.accent : Palette.control;
         border-width: 1px;
-        border-color: #71717a;
+        border-color: Palette.text-faint;
 
         if root.checked: Path {
             x: 2px;
@@ -302,7 +303,7 @@ export component DialogCheckBox inherits Rectangle {
             width: 14px;
             height: 14px;
             commands: "M 2 7 L 6 11 L 12 3";
-            stroke: #18181b;
+            stroke: Palette.on-accent;
             stroke-width: 2px;
         }
     }
@@ -313,7 +314,7 @@ export component DialogCheckBox inherits Rectangle {
         height: parent.height;
         text: root.text;
         font-size: 12px;
-        color: #d4d4d8;
+        color: Palette.text-secondary;
         vertical-alignment: center;
     }
 
@@ -343,7 +344,7 @@ export component DialogRadioButton inherits Rectangle {
     public function take-focus() { focus.focus(); }
 
     height: 26px;
-    background: touch.pressed ? #2b2b30 : (touch.has-hover ? #27272a : transparent);
+    background: touch.pressed ? Palette.control : (touch.has-hover ? Palette.border : transparent);
     forward-focus: focus;
     accessible-role: radio-button;
     accessible-label: root.text;
@@ -356,16 +357,16 @@ export component DialogRadioButton inherits Rectangle {
         y: (parent.height - self.height) / 2;
         width: 16px;
         height: 16px;
-        background: #2b2b30;
+        background: Palette.control;
         border-width: 1px;
-        border-color: root.selected || focus.has-focus ? FocusStyle.ring : #71717a;
+        border-color: root.selected || focus.has-focus ? FocusStyle.ring : Palette.text-faint;
 
         if root.selected: Rectangle {
             x: 4px;
             y: 4px;
             width: 8px;
             height: 8px;
-            background: #8ba9d6;
+            background: Palette.accent;
         }
     }
 
@@ -375,7 +376,7 @@ export component DialogRadioButton inherits Rectangle {
         height: parent.height;
         text: root.text;
         font-size: 12px;
-        color: #d4d4d8;
+        color: Palette.text-secondary;
         vertical-alignment: center;
     }
 
@@ -430,7 +431,7 @@ export component DialogInput inherits Rectangle {
     height: 36px;
     horizontal-stretch: 1;
     clip: true;
-    background: input.has-focus ? #303036 : #2b2b30;
+    background: input.has-focus ? Palette.control-active : Palette.control;
     forward-focus: input;
     TouchArea { clicked => { input.focus(); } }
     if root.text == "": Text {
@@ -438,7 +439,7 @@ export component DialogInput inherits Rectangle {
         width: parent.width - 24px;
         height: parent.height;
         text: root.placeholder-text;
-        color: #a1a1aa;
+        color: Palette.text-muted;
         font-size: 12px;
         vertical-alignment: center;
         overflow: elide;
@@ -464,9 +465,9 @@ export component DialogInput inherits Rectangle {
             single-line: true;
             accepted => { root.accepted(); }
             font-size: 12px;
-            color: #f4f4f5;
-            selection-background-color: #8ba9d6;
-            selection-foreground-color: #18181b;
+            color: Palette.text-primary;
+            selection-background-color: Palette.accent;
+            selection-foreground-color: Palette.on-accent;
             vertical-alignment: center;
             accessible-label: root.label;
             cursor-position-changed(cursor-position) => {
@@ -494,9 +495,9 @@ export component DialogInput inherits Rectangle {
         forward-focus: menu-focus;
 
         Rectangle {
-            background: #1f1f23;
+            background: Palette.surface;
             border-width: 1px;
-            border-color: #3b3b43;
+            border-color: Palette.border-popup;
 
             menu-focus := FocusScope {
                 key-pressed(event) => {
@@ -536,7 +537,7 @@ export component DialogInput inherits Rectangle {
                         private property <bool> available: index == 2 || !root.text.is-empty;
                         height: 28px;
                         background: !self.available ? transparent :
-                            (menu-touch.pressed ? #3b4658 : (root.menu-index == index ? #303036 : transparent));
+                            (menu-touch.pressed ? Palette.selection-pressed : (root.menu-index == index ? Palette.control-active : transparent));
                         accessible-role: button;
                         accessible-label: item.title;
                         accessible-enabled: self.available;
@@ -548,13 +549,13 @@ export component DialogInput inherits Rectangle {
                             Text {
                                 text: item.title;
                                 font-size: 12px;
-                                color: menu-row.available ? #f4f4f5 : #71717a;
+                                color: menu-row.available ? Palette.text-primary : Palette.text-faint;
                                 vertical-alignment: center;
                             }
                             Text {
                                 text: "Ctrl+" + item.shortcut;
                                 font-size: 11px;
-                                color: menu-row.available ? #a1a1aa : #71717a;
+                                color: menu-row.available ? Palette.text-muted : Palette.text-faint;
                                 horizontal-alignment: right;
                                 vertical-alignment: center;
                             }
@@ -593,11 +594,11 @@ export component DialogSlider inherits Rectangle {
     Rectangle {
         x: 10px; y: (parent.height - self.height) / 2;
         width: parent.width - 20px; height: 3px;
-        background: #45454d;
+        background: Palette.control-strong;
         Rectangle {
             x: 0px;
             width: parent.width * (root.value - 1) / 15;
-            background: #8ba9d6;
+            background: Palette.accent;
         }
     }
     // Drawn outside the handle so the ring stays visible on the accent-filled handle.
@@ -613,7 +614,7 @@ export component DialogSlider inherits Rectangle {
         x: 4px + (parent.width - 20px) * (root.value - 1) / 15;
         y: (parent.height - self.height) / 2;
         width: 12px; height: 16px;
-        background: #8ba9d6;
+        background: Palette.accent;
     }
     // Keep native slider input and accessibility; replace only its paint.
     slider := Slider {

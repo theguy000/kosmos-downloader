@@ -1,16 +1,17 @@
+import { Palette } from "theme.slint";
 export component PausedTransferDetails inherits Rectangle {
     in property <bool> is_resumable: false;
 
     min-height: 48px;
     vertical-stretch: 0;
-    background: #202024;
+    background: Palette.surface-alt;
 
     VerticalLayout {
         padding: 12px;
         Text {
             text: root.is_resumable ? "Stopped. Select the download and choose Resume to continue." :
                 "Stopped. Resume is unavailable for this download; Restart downloads the file from the beginning.";
-            color: #d4d4d8;
+            color: Palette.text-secondary;
             font-size: 11px;
             wrap: word-wrap;
             vertical-alignment: center;
@@ -27,7 +28,7 @@ export component StatusFooter inherits Rectangle {
     in property <float> streams_count: 8;
 
     height: 22px;
-    background: #18181b;
+    background: Palette.background;
 
     HorizontalLayout {
         padding-left: 10px;
@@ -39,7 +40,7 @@ export component StatusFooter inherits Rectangle {
                 root.total_items + (root.total_items == 1 ? " total item" : " total items")) + " | " +
                 (root.is_downloading ? "1 active download" : "Idle");
             font-size: 11px;
-            color: #71717a;
+            color: Palette.text-faint;
             vertical-alignment: center;
         }
 
@@ -48,7 +49,7 @@ export component StatusFooter inherits Rectangle {
         Text {
             text: "Transfer: " + (root.is_downloading ? root.active_transfer_rate : "0 KB/s") + " | Streams: " + Math.round(root.streams_count);
             font-size: 11px;
-            color: #71717a;
+            color: Palette.text-faint;
             vertical-alignment: center;
         }
     }

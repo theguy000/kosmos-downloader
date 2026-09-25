@@ -1,3 +1,4 @@
+import { Palette } from "theme.slint";
 import { IdmToolButton } from "controls.slint";
 import {
     IconAdd,
@@ -39,7 +40,7 @@ export component ApplicationToolbar inherits Rectangle {
 
         Rectangle {
             height: 25px;
-            background: #18181b;
+            background: Palette.background;
 
             HorizontalLayout {
                 padding-left: 8px;
@@ -49,26 +50,26 @@ export component ApplicationToolbar inherits Rectangle {
 
                 Rectangle {
                     width: 48px;
-                    background: menu_tasks.has-hover ? #27272a : transparent;
+                    background: menu_tasks.has-hover ? Palette.border : transparent;
                     menu_tasks := TouchArea { mouse-cursor: pointer; clicked => { root.show_add_dialog(); } }
-                    Text { text: "Tasks"; font-size: 11px; color: #d4d4d8; vertical-alignment: center; horizontal-alignment: center; }
+                    Text { text: "Tasks"; font-size: 11px; color: Palette.text-secondary; vertical-alignment: center; horizontal-alignment: center; }
                 }
 
                 Rectangle {
                     width: 40px;
-                    background: menu_file.has-hover ? #27272a : transparent;
+                    background: menu_file.has-hover ? Palette.border : transparent;
                     menu_file := TouchArea {
                         mouse-cursor: pointer;
                         clicked => {
                             if root.has_active_download && root.is_completed { root.open_file(); }
                         }
                     }
-                    Text { text: "File"; font-size: 11px; color: #d4d4d8; vertical-alignment: center; horizontal-alignment: center; }
+                    Text { text: "File"; font-size: 11px; color: Palette.text-secondary; vertical-alignment: center; horizontal-alignment: center; }
                 }
 
                 Rectangle {
                     width: 72px;
-                    background: menu_dl.has-hover ? #27272a : transparent;
+                    background: menu_dl.has-hover ? Palette.border : transparent;
                     menu_dl := TouchArea {
                         mouse-cursor: pointer;
                         clicked => {
@@ -76,7 +77,7 @@ export component ApplicationToolbar inherits Rectangle {
                             else if root.can_resume { root.resume_download(); }
                         }
                     }
-                    Text { text: "Downloads"; font-size: 11px; color: #d4d4d8; vertical-alignment: center; horizontal-alignment: center; }
+                    Text { text: "Downloads"; font-size: 11px; color: Palette.text-secondary; vertical-alignment: center; horizontal-alignment: center; }
                 }
 
                 Rectangle {
@@ -84,7 +85,7 @@ export component ApplicationToolbar inherits Rectangle {
                     accessible-role: button;
                     accessible-label: "View (unavailable)";
                     accessible-enabled: false;
-                    Text { text: "View"; font-size: 11px; color: #71717a; vertical-alignment: center; horizontal-alignment: center; }
+                    Text { text: "View"; font-size: 11px; color: Palette.text-faint; vertical-alignment: center; horizontal-alignment: center; }
                 }
 
                 Rectangle {
@@ -92,16 +93,16 @@ export component ApplicationToolbar inherits Rectangle {
                     accessible-role: button;
                     accessible-label: "Help (unavailable)";
                     accessible-enabled: false;
-                    Text { text: "Help"; font-size: 11px; color: #71717a; vertical-alignment: center; horizontal-alignment: center; }
+                    Text { text: "Help"; font-size: 11px; color: Palette.text-faint; vertical-alignment: center; horizontal-alignment: center; }
                 }
             }
         }
 
-        Rectangle { height: 1px; background: #27272a; }
+        Rectangle { height: 1px; background: Palette.border; }
 
         Rectangle {
             height: 52px;
-            background: #1f1f23;
+            background: Palette.surface;
 
             HorizontalLayout {
                 padding-left: 8px;
@@ -139,7 +140,7 @@ export component ApplicationToolbar inherits Rectangle {
                     IconStopAll {}
                 }
 
-                Rectangle { width: 1px; height: 32px; background: #27272a; }
+                Rectangle { width: 1px; height: 32px; background: Palette.border; }
 
                 delete_selected := IdmToolButton {
                     text: "Delete";
@@ -156,7 +157,7 @@ export component ApplicationToolbar inherits Rectangle {
                     IconDeleteCompleted {}
                 }
 
-                Rectangle { width: 1px; height: 32px; background: #27272a; }
+                Rectangle { width: 1px; height: 32px; background: Palette.border; }
 
                 options := IdmToolButton {
                     text: "Options";
@@ -166,6 +167,6 @@ export component ApplicationToolbar inherits Rectangle {
             }
         }
 
-        Rectangle { height: 1px; background: #27272a; }
+        Rectangle { height: 1px; background: Palette.border; }
     }
 }

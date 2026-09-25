@@ -1,3 +1,4 @@
+import { Palette } from "theme.slint";
 import { DialogCheckBox, PointerButton } from "controls.slint";
 
 export component DeleteConfirmationDialog inherits Rectangle {
@@ -17,7 +18,7 @@ export component DeleteConfirmationDialog inherits Rectangle {
         else { delete_button.take-focus(); }
     }
 
-    background: #000000bb;
+    background: Palette.overlay;
     forward-focus: dialog_focus;
     init => { root.focus-item(1); }
 
@@ -61,7 +62,7 @@ export component DeleteConfirmationDialog inherits Rectangle {
             y: (root.height - self.height) / 2;
             width: 440px;
             height: 180px;
-            background: #1f1f23;
+            background: Palette.surface;
             accessible-role: groupbox;
             accessible-label: (root.completed_only ? "Delete completed download: " : "Delete download: ")
                 + root.filename;
@@ -75,7 +76,7 @@ export component DeleteConfirmationDialog inherits Rectangle {
                     text: root.completed_only ? "Delete completed download?" : "Delete download?";
                     font-size: 15px;
                     font-weight: 600;
-                    color: #f4f4f5;
+                    color: Palette.text-primary;
                 }
 
                 if root.filename != "": Text {
@@ -83,7 +84,7 @@ export component DeleteConfirmationDialog inherits Rectangle {
                     text: root.filename;
                     font-size: 12px;
                     font-weight: 600;
-                    color: #f4f4f5;
+                    color: Palette.text-primary;
                     overflow: elide;
                 }
 
@@ -96,7 +97,7 @@ export component DeleteConfirmationDialog inherits Rectangle {
                             ? "The download is removed from this list. The downloaded file stays on disk."
                             : "The download is removed from this list. Any partial file stays on disk.");
                     font-size: 12px;
-                    color: #d4d4d8;
+                    color: Palette.text-secondary;
                     wrap: word-wrap;
                 }
 

@@ -1,3 +1,4 @@
+import { Palette } from "theme.slint";
 // Inter 4.1: https://github.com/rsms/inter/releases/tag/v4.1 (SIL OFL 1.1).
 import "../fonts/InterVariable.ttf";
 
@@ -19,7 +20,7 @@ export component MainWindow inherits Window {
     preferred-height: 540px;
     min-width: 760px;
     min-height: 420px;
-    background: #18181b;
+    background: Palette.background;
 
     in-out property <string> url_text: "";
     in-out property <string> dest_dir_text: "";
@@ -53,7 +54,7 @@ export component MainWindow inherits Window {
     in-out property <string> active_file_type: "doc";
     in-out property <string> active_size: "0 B";
     in-out property <string> active_status: "Idle";
-    in-out property <color> active_status_color: #71717a;
+    in-out property <color> active_status_color: Palette.text-faint;
     in-out property <string> active_time_left: "--:--";
     in-out property <string> active_transfer_rate: "0 KB/s";
     in-out property <string> active_downloaded: "Today";
@@ -168,7 +169,7 @@ export component MainWindow inherits Window {
                 collapsed <=> root.sidebar_collapsed;
             }
 
-            Rectangle { width: 1px; background: #27272a; }
+            Rectangle { width: 1px; background: Palette.border; }
 
             DownloadTable {
                 col-filename-width <=> root.col_filename_width;
@@ -203,7 +204,7 @@ export component MainWindow inherits Window {
             }
         }
 
-        Rectangle { height: 1px; background: #27272a; }
+        Rectangle { height: 1px; background: Palette.border; }
 
         StatusFooter {
             selected-category: root.selected_category;

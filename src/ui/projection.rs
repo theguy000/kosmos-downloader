@@ -1,7 +1,8 @@
 use super::format::{format_bytes, format_eta, format_speed};
-use super::view::MainWindow;
+use super::view::{MainWindow, Palette};
 use crate::engine::{DownloadSnapshot, DownloadStatus};
 use crate::history::{HistoryEntry, downloaded_label};
+use slint::ComponentHandle;
 use std::path::Path;
 use tokio::sync::watch;
 
@@ -121,37 +122,23 @@ pub(super) fn update_window_state(window: &MainWindow, snap: &DownloadSnapshot) 
     let file_type = file_type_from_filename(&snap.filename);
     window.set_active_file_type(file_type.as_str().into());
 
+    let (idle_color, warning_color, success_color, danger_color) = {
+        let palette = window.global::<Palette>();
+        (
+            palette.get_text_faint(),
+            palette.get_warning(),
+            palette.get_success(),
+            palette.get_danger_text(),
+        )
+    };
+
     let (badge, color, err) = match &snap.status {
-        DownloadStatus::Idle => (
-            "Idle",
-            slint::Color::from_rgb_u8(113, 113, 122),
-            String::new(),
-        ),
-        DownloadStatus::Connecting => (
-            "Connecting",
-            slint::Color::from_rgb_u8(245, 158, 11),
-            String::new(),
-        ),
-        DownloadStatus::Downloading => (
-            "Downloading",
-            slint::Color::from_rgb_u8(16, 185, 129),
-            String::new(),
-        ),
-        DownloadStatus::Paused => (
-            "Stopped",
-            slint::Color::from_rgb_u8(245, 158, 11),
-            String::new(),
-        ),
-        DownloadStatus::Completed => (
-            "Complete",
-            slint::Color::from_rgb_u8(16, 185, 129),
-            String::new(),
-        ),
-        DownloadStatus::Failed(msg) => (
-            "Failed",
-            slint::Color::from_rgb_u8(239, 68, 68),
-            msg.clone(),
-        ),
+        DownloadStatus::Idle => ("Idle", idle_color, String::new()),
+        DownloadStatus::Connecting => ("Connecting", warning_color, String::new()),
+        DownloadStatus::Downloading => ("Downloading", success_color, String::new()),
+        DownloadStatus::Paused => ("Stopped", warning_color, String::new()),
+        DownloadStatus::Completed => ("Complete", success_color, String::new()),
+        DownloadStatus::Failed(msg) => ("Failed", danger_color, msg.clone()),
     };
 
     let progress = match snap.total_bytes {
