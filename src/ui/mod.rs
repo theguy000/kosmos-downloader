@@ -1,9 +1,15 @@
+mod actions;
 mod app;
+mod columns;
 mod default_extensions;
+mod delete;
 mod format;
+mod options;
 mod platform;
 mod projection;
 pub(crate) mod save_settings;
+mod state;
+mod table;
 mod table_settings;
 #[cfg(test)]
 mod tests;
