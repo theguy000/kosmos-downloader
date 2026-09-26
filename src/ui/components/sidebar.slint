@@ -1,23 +1,39 @@
 import { Palette } from "theme.slint";
+import { ScrollView } from "std-widgets.slint";
 import { CategoryRow, FocusStyle } from "controls.slint";
 import {
-    IconArchive,
-    IconAudio,
+    FileTypeIcon,
     IconCheck,
-    IconDoc,
     IconFolder,
     IconGrabber,
-    IconMedia,
-    IconProgram,
     IconQueue,
     IconSidebarToggle,
     IconUnfinished,
 } from "icons.slint";
 
+struct Subcategory {
+    name: string,
+    icon: string,
+}
+
 export component CategorySidebar inherits Rectangle {
     in-out property <int> selected_category;
     in-out property <bool> all_downloads_expanded;
     in-out property <bool> collapsed: false;
+
+    private property <[Subcategory]> subcategories: [
+        { name: "Compressed", icon: "zip" },
+        { name: "Documents", icon: "doc" },
+        { name: "Music", icon: "audio" },
+        { name: "Programs", icon: "exe" },
+        { name: "Video", icon: "video" },
+        { name: "Images", icon: "image" },
+        { name: "Ebooks", icon: "ebook" },
+        { name: "Source Code", icon: "code" },
+        { name: "Disk Images", icon: "iso" },
+        { name: "Torrents", icon: "torrent" },
+        { name: "Databases", icon: "db" },
+    ];
 
     width: root.collapsed ? 28px : 200px;
     background: Palette.background;
@@ -95,56 +111,30 @@ export component CategorySidebar inherits Rectangle {
                 clicked => { root.selected_category = 0; }
                 toggle => {
                     root.all_downloads_expanded = !root.all_downloads_expanded;
-                    if !root.all_downloads_expanded && root.selected_category >= 1 && root.selected_category <= 5 {
+                    if !root.all_downloads_expanded && root.selected_category >= 1 && root.selected_category <= 11 {
                         root.selected_category = 0;
                     }
                 }
                 IconFolder {}
             }
 
-            if root.all_downloads_expanded: VerticalLayout {
-                spacing: 0px;
-                padding: 0px;
+            if root.all_downloads_expanded: ScrollView {
+                vertical-stretch: 1;
+                max-height: 11 * 26px;
+                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
 
-                CategoryRow {
-                    text: "Compressed";
-                    child: true;
-                    selected: root.selected_category == 1;
-                    clicked => { root.selected_category = 1; }
-                    IconArchive {}
-                }
+                VerticalLayout {
+                    spacing: 0px;
+                    padding: 0px;
 
-                CategoryRow {
-                    text: "Documents";
-                    child: true;
-                    selected: root.selected_category == 2;
-                    clicked => { root.selected_category = 2; }
-                    IconDoc {}
-                }
-
-                CategoryRow {
-                    text: "Music";
-                    child: true;
-                    selected: root.selected_category == 3;
-                    clicked => { root.selected_category = 3; }
-                    IconAudio {}
-                }
-
-                CategoryRow {
-                    text: "Programs";
-                    child: true;
-                    selected: root.selected_category == 4;
-                    clicked => { root.selected_category = 4; }
-                    IconProgram {}
-                }
-
-                CategoryRow {
-                    text: "Video";
-                    child: true;
-                    last-child: true;
-                    selected: root.selected_category == 5;
-                    clicked => { root.selected_category = 5; }
-                    IconMedia {}
+                    for subcat[index] in root.subcategories: CategoryRow {
+                        text: subcat.name;
+                        child: true;
+                        last-child: index == 10;
+                        selected: root.selected_category == index + 1;
+                        clicked => { root.selected_category = index + 1; }
+                        FileTypeIcon { file-type: subcat.icon; }
+                    }
                 }
             }
 
@@ -155,15 +145,15 @@ export component CategorySidebar inherits Rectangle {
 
             CategoryRow {
                 text: "Unfinished";
-                selected: root.selected_category == 6;
-                clicked => { root.selected_category = 6; }
+                selected: root.selected_category == 12;
+                clicked => { root.selected_category = 12; }
                 IconUnfinished {}
             }
 
             CategoryRow {
                 text: "Finished";
-                selected: root.selected_category == 7;
-                clicked => { root.selected_category = 7; }
+                selected: root.selected_category == 13;
+                clicked => { root.selected_category = 13; }
                 IconCheck {}
             }
 
@@ -175,16 +165,16 @@ export component CategorySidebar inherits Rectangle {
             CategoryRow {
                 text: "Grabber projects";
                 enabled: false;
-                selected: root.selected_category == 8;
-                clicked => { root.selected_category = 8; }
+                selected: root.selected_category == 14;
+                clicked => { root.selected_category = 14; }
                 IconGrabber {}
             }
 
             CategoryRow {
                 text: "Queues";
                 enabled: false;
-                selected: root.selected_category == 9;
-                clicked => { root.selected_category = 9; }
+                selected: root.selected_category == 15;
+                clicked => { root.selected_category = 15; }
                 IconQueue {}
             }
         }

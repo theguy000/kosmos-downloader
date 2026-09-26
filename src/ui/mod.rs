@@ -1,7 +1,9 @@
 mod app;
+mod default_extensions;
 mod format;
 mod platform;
 mod projection;
+pub(crate) mod save_settings;
 mod table_settings;
 #[cfg(test)]
 mod tests;

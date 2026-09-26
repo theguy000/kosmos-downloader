@@ -4,6 +4,7 @@ use super::platform::default_download_directory;
 use super::projection::{
     history_table_item, should_project_snapshot, sort_items, update_window_state,
 };
+use super::save_settings::SaveSettings;
 use crate::history::{HistoryEntry, HistoryStore, downloaded_label};
 use slint::ComponentHandle;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
@@ -21,6 +22,43 @@ fn finished_entry(id: i32, filename: &str, total_bytes: u64) -> HistoryEntry {
         total_bytes,
         completed_unix_ms: 1_700_000_000_000 + id as u64,
     }
+}
+
+fn replace_category_value(
+    model: &slint::ModelRc<slint::SharedString>,
+    category: usize,
+    value: &str,
+) -> slint::ModelRc<slint::SharedString> {
+    use slint::Model;
+    let mut values: Vec<slint::SharedString> = model.iter().collect();
+    if let Some(slot) = values.get_mut(category) {
+        *slot = value.into();
+    }
+    slint::ModelRc::from(values.as_slice())
+}
+
+fn option_dir(ui: &MainWindow, category: usize) -> slint::SharedString {
+    use slint::Model;
+    ui.get_options_category_dirs()
+        .row_data(category)
+        .unwrap_or_default()
+}
+
+fn set_option_dir(ui: &MainWindow, category: usize, value: &str) {
+    let model = replace_category_value(&ui.get_options_category_dirs(), category, value);
+    ui.set_options_category_dirs(model);
+}
+
+fn option_file_types(ui: &MainWindow, category: usize) -> slint::SharedString {
+    use slint::Model;
+    ui.get_options_category_file_types()
+        .row_data(category)
+        .unwrap_or_default()
+}
+
+fn set_option_file_types(ui: &MainWindow, category: usize, value: &str) {
+    let model = replace_category_value(&ui.get_options_category_file_types(), category, value);
+    ui.set_options_category_file_types(model);
 }
 
 type TestContext = (Rc<MinimalSoftwareWindow>, Rc<RefCell<String>>);
@@ -158,30 +196,38 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         render();
         // Every label and trailing blank area selects the same full-width row.
         for x in [90.0, 185.0] {
-            ui.set_selected_category(6);
+            ui.set_selected_category(12);
             click(x, 124.0);
             assert_eq!(ui.get_selected_category(), 0);
             render();
         }
-        for category in 1..10 {
-            let gap = if category >= 8 {
-                12
-            } else if category >= 6 {
-                6
-            } else {
-                0
-            };
-            let y = (124 + category * 26 + gap) as f32;
+        for category in 1..=5 {
+            let y = (124 + category * 26) as f32;
             for x in [90.0, 185.0] {
                 click(x, y);
                 assert_eq!(
                     ui.get_selected_category(),
-                    category.min(7),
+                    category,
+                    "Category in initial 5 rows must be selectable"
+                );
+                render();
+            }
+        }
+        ui.set_all_downloads_expanded(false);
+        render();
+        for (category, y) in [(12, 156.0), (13, 182.0), (14, 214.0), (15, 240.0)] {
+            for x in [90.0, 185.0] {
+                click(x, y);
+                assert_eq!(
+                    ui.get_selected_category(),
+                    category.min(13),
                     "Unimplemented categories must not change the selection"
                 );
                 render();
             }
         }
+        ui.set_all_downloads_expanded(true);
+        render();
         click(90.0, 150.0);
         assert_eq!(ui.get_selected_category(), 1);
         click(90.0, 124.0);
@@ -197,7 +243,7 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         assert_eq!(ui.get_selected_category(), 0);
         render();
         click(90.0, 156.0);
-        assert_eq!(ui.get_selected_category(), 6);
+        assert_eq!(ui.get_selected_category(), 12);
         click(90.0, 124.0);
         window.dispatch_event(WindowEvent::KeyPressed {
             text: slint::platform::Key::RightArrow.into(),
@@ -400,9 +446,9 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
             resumable: true,
             ..Default::default()
         };
-        update_window_state(&ui, &snapshot);
+        update_window_state(&ui, &SaveSettings::default(), &snapshot);
         assert_eq!(ui.get_total_items(), 1);
-        ui.set_selected_category(6);
+        ui.set_selected_category(12);
         ui.set_selected_row(1);
         render();
         assert!(ui.get_active_row_visible());
@@ -439,7 +485,7 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         assert_eq!(stopped.get(), 3);
 
         snapshot.status = DownloadStatus::Paused;
-        update_window_state(&ui, &snapshot);
+        update_window_state(&ui, &SaveSettings::default(), &snapshot);
         render();
         assert!(ui.get_can_resume());
         assert!(!ui.get_can_stop_all());
@@ -545,13 +591,13 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         click(102.0, 50.0);
         assert_eq!(resumed.get(), 1);
         snapshot.resumable = false;
-        update_window_state(&ui, &snapshot);
+        update_window_state(&ui, &SaveSettings::default(), &snapshot);
         render();
         click(102.0, 50.0);
         assert_eq!(resumed.get(), 2, "Non-range downloads can restart");
         snapshot.status = DownloadStatus::Failed("Offline".into());
         snapshot.resumable = true;
-        update_window_state(&ui, &snapshot);
+        update_window_state(&ui, &SaveSettings::default(), &snapshot);
         assert!(
             ui.get_can_resume(),
             "Network failures retain a resume action"
@@ -565,9 +611,9 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
             "The error dialog can be dismissed"
         );
         snapshot.resumable = false;
-        update_window_state(&ui, &snapshot);
+        update_window_state(&ui, &SaveSettings::default(), &snapshot);
         assert!(!ui.get_can_resume(), "Unsafe failures cannot resume");
-        ui.set_selected_category(7);
+        ui.set_selected_category(13);
         assert!(!ui.get_active_row_visible());
         assert!(!ui.get_can_resume(), "Hidden selection cannot be resumed");
         for status in [
@@ -579,8 +625,8 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
             DownloadStatus::Idle,
         ] {
             snapshot.status = status.clone();
-            update_window_state(&ui, &snapshot);
-            ui.set_selected_category(6);
+            update_window_state(&ui, &SaveSettings::default(), &snapshot);
+            ui.set_selected_category(12);
             assert_eq!(
                 ui.get_active_row_visible(),
                 !matches!(status, DownloadStatus::Completed | DownloadStatus::Idle)
@@ -595,9 +641,9 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
             render();
         }
         snapshot.status = DownloadStatus::Completed;
-        update_window_state(&ui, &snapshot);
+        update_window_state(&ui, &SaveSettings::default(), &snapshot);
         ui.set_completed_listed(true);
-        ui.set_selected_category(6);
+        ui.set_selected_category(12);
         ui.set_selected_row(1);
         assert!(!ui.get_can_delete_selected());
         assert!(
@@ -901,10 +947,10 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
 
         // A finished download is never pinned; only an unfinished one follows the category filter.
         snapshot.status = DownloadStatus::Downloading;
-        update_window_state(&ui, &snapshot);
-        for category in 0..10 {
+        update_window_state(&ui, &SaveSettings::default(), &snapshot);
+        for category in 0..16 {
             ui.set_selected_category(category);
-            assert_eq!(ui.get_active_row_visible(), matches!(category, 0 | 1 | 6));
+            assert_eq!(ui.get_active_row_visible(), matches!(category, 0 | 1 | 12));
         }
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         assert!(send_action(&ui, &tx, DownloadAction::Pause));
@@ -914,7 +960,7 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         assert!(!send_action(&ui, &tx, DownloadAction::Pause));
         assert!(ui.get_action_error_message().contains("unavailable"));
         ui.set_action_error_message("".into());
-        update_window_state(&ui, &DownloadSnapshot::default());
+        update_window_state(&ui, &SaveSettings::default(), &DownloadSnapshot::default());
         render();
 
         use slint::Model;
@@ -930,7 +976,10 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
     use slint::Model;
     let history = std::rc::Rc::new(slint::VecModel::<super::TableItem>::default());
     ui.set_sample_downloads(history.clone().into());
-    history.push(history_table_item(&finished_entry(1, "file.bin", 1024)));
+    history.push(history_table_item(
+        &SaveSettings::default(),
+        &finished_entry(1, "file.bin", 1024),
+    ));
     assert_eq!(ui.get_sample_downloads().row_count(), 1);
     assert_eq!(ui.get_total_items(), 1);
     ui.set_has_active_download(true);
@@ -956,6 +1005,7 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
             completed_unix_ms: 1_700_000_000_000,
         };
         store.record(entry.clone())?;
+        history.set_row_data(0, history_table_item(&SaveSettings::default(), &entry));
 
         // Create the dummy target file on disk
         std::fs::write(&entry.save_path, b"dummy data")?;
@@ -963,14 +1013,14 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
 
         // Initially nothing selected
         ui.set_selected_row(-1);
-        update_selection_state(&ui, &store, -1);
+        update_selection_state(&ui, -1);
         assert!(!ui.get_history_row_selected());
         assert!(!ui.get_can_delete_selected());
 
         // Select row 1 (video.mp4) in All category (0)
         ui.set_selected_category(0);
         ui.set_selected_row(1);
-        update_selection_state(&ui, &store, 1);
+        update_selection_state(&ui, 1);
         assert!(ui.get_history_row_selected());
         assert!(
             ui.get_can_delete_selected(),
@@ -981,7 +1031,7 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         // app to move the selection.
         let second = finished_entry(2, "second.bin", 2_048);
         store.record(second.clone())?;
-        history.push(history_table_item(&second));
+        history.push(history_table_item(&SaveSettings::default(), &second));
         let steps = Rc::new(std::cell::RefCell::new(Vec::new()));
         ui.on_step_selection({
             let steps = steps.clone();
@@ -1023,13 +1073,13 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         );
 
         // The app moves the selection through the listed rows, and stops at both ends.
-        step_selection(&ui, &store, 1);
+        step_selection(&ui, 1);
         assert_eq!(
             ui.get_selected_row(),
             1,
             "the first step picks the top listed row"
         );
-        step_selection(&ui, &store, 1);
+        step_selection(&ui, 1);
         assert_eq!(
             ui.get_selected_row(),
             2,
@@ -1039,20 +1089,20 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
             ui.get_history_row_selected(),
             "a row reached this way can be deleted"
         );
-        step_selection(&ui, &store, 1);
+        step_selection(&ui, 1);
         assert_eq!(
             ui.get_selected_row(),
             2,
             "the selection stops at the last listed row"
         );
-        step_selection(&ui, &store, -1);
+        step_selection(&ui, -1);
         assert_eq!(
             ui.get_selected_row(),
             1,
             "the up arrow moves back to the previous row"
         );
         ui.set_selected_category(5);
-        step_selection(&ui, &store, 1);
+        step_selection(&ui, 1);
         assert_eq!(
             ui.get_selected_row(),
             1,
@@ -1062,7 +1112,7 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
 
         // Change category to Compressed (1) -> video.mp4 does not match
         ui.set_selected_category(1);
-        update_selection_state(&ui, &store, 1);
+        update_selection_state(&ui, 1);
         assert!(!ui.get_history_row_selected());
         assert!(
             !ui.get_can_delete_selected(),
@@ -1071,7 +1121,7 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
 
         // Change category to Video (5) -> video.mp4 matches
         ui.set_selected_category(5);
-        update_selection_state(&ui, &store, 1);
+        update_selection_state(&ui, 1);
         assert!(ui.get_history_row_selected());
         assert!(ui.get_can_delete_selected());
 
@@ -1116,7 +1166,7 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
 
         // A file deletion that failed keeps the row and reports why.
         store.record(entry.clone())?;
-        history.push(history_table_item(&entry));
+        history.push(history_table_item(&SaveSettings::default(), &entry));
         ui.set_selected_row(entry.id);
         ui.set_history_row_selected(true);
         ui.set_show_delete_dialog(true);
@@ -1154,9 +1204,18 @@ fn controls_and_filters_support_pointer_and_keyboard() -> Result<(), Box<dyn std
         use slint::Model;
 
         let sort_history = Rc::new(slint::VecModel::<TableItem>::default());
-        sort_history.push(history_table_item(&finished_entry(1, "alpha.bin", 4096)));
-        sort_history.push(history_table_item(&finished_entry(2, "beta.bin", 1024)));
-        sort_history.push(history_table_item(&finished_entry(3, "gamma.bin", 2048)));
+        sort_history.push(history_table_item(
+            &SaveSettings::default(),
+            &finished_entry(1, "alpha.bin", 4096),
+        ));
+        sort_history.push(history_table_item(
+            &SaveSettings::default(),
+            &finished_entry(2, "beta.bin", 1024),
+        ));
+        sort_history.push(history_table_item(
+            &SaveSettings::default(),
+            &finished_entry(3, "gamma.bin", 2048),
+        ));
         ui.set_sample_downloads(sort_history.clone().into());
 
         {
@@ -1285,7 +1344,7 @@ fn test_duplicate_prompt_projection_updates_window() -> Result<(), Box<dyn std::
         ..Default::default()
     };
 
-    update_window_state(&ui, &snap);
+    update_window_state(&ui, &SaveSettings::default(), &snap);
     assert!(ui.get_show_duplicate_dialog());
     assert_eq!(ui.get_duplicate_url(), "http://example.com/file.zip");
     assert_eq!(ui.get_duplicate_filename(), "file.zip");
@@ -1298,12 +1357,12 @@ fn test_duplicate_prompt_projection_updates_window() -> Result<(), Box<dyn std::
     ui.set_duplicate_remember(true);
 
     // Another update tick for the same prompt preserves user choice
-    update_window_state(&ui, &snap);
+    update_window_state(&ui, &SaveSettings::default(), &snap);
     assert_eq!(ui.get_duplicate_selected_option(), 1);
     assert!(ui.get_duplicate_remember());
 
     snap.duplicate = None;
-    update_window_state(&ui, &snap);
+    update_window_state(&ui, &SaveSettings::default(), &snap);
     assert!(!ui.get_show_duplicate_dialog());
 
     // Adversarial verification: send_action channel capacity saturation
@@ -1340,12 +1399,12 @@ fn test_duplicate_prompt_projection_updates_window() -> Result<(), Box<dyn std::
     snap.downloaded_bytes = 1024;
     snap.total_bytes = Some(4096);
     snap.status = crate::engine::DownloadStatus::Downloading;
-    update_window_state(&ui, &snap);
+    update_window_state(&ui, &SaveSettings::default(), &snap);
     assert_eq!(ui.get_active_size(), "1.0 KB / 4.0 KB");
 
     snap.status = crate::engine::DownloadStatus::Completed;
     snap.downloaded_bytes = 4096;
-    update_window_state(&ui, &snap);
+    update_window_state(&ui, &SaveSettings::default(), &snap);
     assert_eq!(ui.get_active_size(), "4.0 KB");
 
     Ok(())
@@ -1386,12 +1445,12 @@ fn completed_download_archiving_preserves_history() {
     let history = slint::VecModel::<TableItem>::default();
     assert_eq!(history.row_count(), 0);
 
-    let first = finished_entry(1, "file.bin", 1024);
-    history.push(history_table_item(&first));
+    let first = finished_entry(1, "file.txt", 1024);
+    history.push(history_table_item(&SaveSettings::default(), &first));
     assert_eq!(history.row_count(), 1);
     let listed = history.row_data(0).unwrap();
     assert_eq!(listed.id, 1, "Row 0 stays reserved for the active download");
-    assert_eq!(listed.filename, "file.bin");
+    assert_eq!(listed.filename, "file.txt");
     assert_eq!(listed.file_type, "doc");
     assert_eq!(listed.size_text, "1.0 KB");
     assert_eq!(listed.status_text, "Complete");
@@ -1404,7 +1463,10 @@ fn completed_download_archiving_preserves_history() {
     );
     assert_eq!(listed.size_bytes, 1024.0);
 
-    history.push(history_table_item(&finished_entry(2, "archive.ZIP", 2048)));
+    history.push(history_table_item(
+        &SaveSettings::default(),
+        &finished_entry(2, "archive.ZIP", 2048),
+    ));
     assert_eq!(history.row_count(), 2);
     assert_eq!(history.row_data(0).unwrap().id, 1);
     let newest = history.row_data(1).unwrap();
@@ -1431,7 +1493,7 @@ fn sort_items_orders_by_each_sortable_column() {
         let mut entry = finished_entry(index as i32 + 1, name, size);
         // One minute apart, so the displayed Downloaded times differ.
         entry.completed_unix_ms = 1_700_000_000_000 + index as u64 * 60_000;
-        history_table_item(&entry)
+        history_table_item(&SaveSettings::default(), &entry)
     })
     .collect();
 
@@ -1460,7 +1522,12 @@ fn sort_items_orders_by_each_sortable_column() {
 
     // Equal keys fall back to ascending id.
     let mut tied: Vec<TableItem> = (1..=2)
-        .map(|id| history_table_item(&finished_entry(id, "same.bin", 2048)))
+        .map(|id| {
+            history_table_item(
+                &SaveSettings::default(),
+                &finished_entry(id, "same.bin", 2048),
+            )
+        })
         .collect();
     tied.reverse();
     sort_items(&mut tied, 1, true);
@@ -1614,4 +1681,531 @@ fn completed_download_persists_immediately_without_next_session() {
     let reloaded = HistoryStore::load_from(file.path().to_path_buf());
     assert_eq!(reloaded.entries().len(), 1);
     assert_eq!(reloaded.entries()[0].filename, "testfile.iso");
+}
+
+#[test]
+fn options_save_to_tab_properties_and_navigation() -> Result<(), Box<dyn std::error::Error>> {
+    use super::save_settings::{Category, SaveSettings};
+    use slint::platform::WindowEvent;
+
+    let (window, _clipboard) = install_test_platform()?;
+    let ui = MainWindow::new()?;
+    ui.show()?;
+    window.set_size(slint::PhysicalSize::new(960, 540));
+
+    let render = || {
+        window.draw_if_needed(|renderer| {
+            let mut pixels = vec![slint::Rgb8Pixel::default(); 960 * 540];
+            renderer.render(&mut pixels, 960);
+        });
+    };
+    let press = |text: slint::SharedString| {
+        window.dispatch_event(WindowEvent::KeyPressed { text });
+    };
+
+    ui.set_options_selected_tab(2); // Save To tab
+    set_option_dir(&ui, 0, "D:\\Downloads");
+    set_option_dir(&ui, 1, "D:\\Downloads\\Compressed");
+    set_option_dir(&ui, 5, "D:\\Downloads\\Video");
+    ui.set_show_options_dialog(true);
+    render();
+
+    assert_eq!(ui.get_options_selected_tab(), 2);
+    assert_eq!(ui.get_options_save_category(), 0);
+    assert_eq!(option_dir(&ui, 0), "D:\\Downloads");
+
+    // Cycle through categories on the Save To tab
+    ui.set_options_save_category(1); // Compressed
+    assert_eq!(ui.get_options_save_category(), 1);
+    assert_eq!(option_dir(&ui, 1), "D:\\Downloads\\Compressed");
+
+    ui.set_options_save_category(5); // Video
+    assert_eq!(ui.get_options_save_category(), 5);
+    assert_eq!(option_dir(&ui, 5), "D:\\Downloads\\Video");
+
+    // Test reset default calculation
+    let default_dir = PathBuf::from("D:\\Downloads");
+    let video_sub = SaveSettings::default_subfolder(&default_dir, Category::Video);
+    assert_eq!(video_sub, PathBuf::from("D:\\Downloads\\Video"));
+
+    let compressed_sub = SaveSettings::default_subfolder(&default_dir, Category::Compressed);
+    assert_eq!(compressed_sub, PathBuf::from("D:\\Downloads\\Compressed"));
+
+    // Verify pointer clicks do not leave focus rings on Save To controls
+    let click = |x: f32, y: f32| {
+        window.dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(x, y),
+        });
+        window.dispatch_event(WindowEvent::PointerPressed {
+            position: slint::LogicalPosition::new(x, y),
+            button: slint::platform::PointerEventButton::Left,
+        });
+        window.dispatch_event(WindowEvent::PointerReleased {
+            position: slint::LogicalPosition::new(x, y),
+            button: slint::platform::PointerEventButton::Left,
+        });
+        render();
+    };
+    let capture = || {
+        window.request_redraw();
+        let mut probe = vec![slint::Rgb8Pixel::default(); (960 * 540) as usize];
+        window.draw_if_needed(|renderer| {
+            renderer.render(&mut probe, 960);
+        });
+        probe
+    };
+    let pixel =
+        |probe: &[slint::Rgb8Pixel], x: f32, y: f32| probe[(y as usize) * 960 + (x as usize)];
+    let ring = slint::Rgb8Pixel {
+        r: 0x8b,
+        g: 0xa9,
+        b: 0xd6,
+    };
+
+    // Click Default button (centered around x = 692, y = 281)
+    click(692.0, 281.0);
+    let probe = capture();
+    // Border at top of Default button (y = 261, 2px ring offset is at y = 261)
+    assert_ne!(
+        pixel(&probe, 692.0, 261.0),
+        ring,
+        "Clicking Default button with mouse does not show focus ring"
+    );
+
+    // Click Category combobox (x = 414, y = 208) to open, then click outside (x = 210, y = 90) to close
+    click(414.0, 208.0);
+    click(210.0, 90.0);
+    let probe = capture();
+    assert_ne!(
+        pixel(&probe, 414.0, 192.0),
+        ring,
+        "Opening and closing Category combobox with mouse does not show focus ring"
+    );
+
+    // Reopen dialog to test keyboard navigation from fresh state
+    press(slint::platform::Key::Escape.into());
+    assert!(!ui.get_show_options_dialog());
+    ui.set_show_options_dialog(true);
+    render();
+
+    // First Tab moves to tab strip (stop 0)
+    press(slint::platform::Key::Tab.into());
+    // Second Tab moves from tab strip to Category combobox (stop 1)
+    press(slint::platform::Key::Tab.into());
+    let probe = capture();
+    assert_eq!(
+        pixel(&probe, 414.0, 192.0),
+        ring,
+        "Tab from tab strip moves focus to Category combobox and shows focus ring"
+    );
+
+    // Dismiss with Escape
+    press(slint::platform::Key::Escape.into());
+    assert!(!ui.get_show_options_dialog());
+
+    Ok(())
+}
+
+#[test]
+fn add_download_category_routing_on_url_change() {
+    use super::save_settings::{Category, SaveSettings};
+
+    let mut settings = SaveSettings {
+        default_dir: PathBuf::from("C:\\Users\\user\\Downloads"),
+        ..Default::default()
+    };
+    settings.set_category_dir(
+        Category::Compressed,
+        Some(PathBuf::from("C:\\Users\\user\\Downloads\\Archives")),
+    );
+    settings.set_category_dir(Category::Video, Some(PathBuf::from("E:\\Media\\Videos")));
+
+    // Verify category paths
+    assert_eq!(
+        settings.category_path(Category::General),
+        PathBuf::from("C:\\Users\\user\\Downloads")
+    );
+    assert_eq!(
+        settings.category_path(Category::Compressed),
+        PathBuf::from("C:\\Users\\user\\Downloads\\Archives")
+    );
+    assert_eq!(
+        settings.category_path(Category::Video),
+        PathBuf::from("E:\\Media\\Videos")
+    );
+    assert_eq!(
+        settings.category_path(Category::Documents),
+        PathBuf::from("C:\\Users\\user\\Downloads\\Documents")
+    );
+
+    // Verify URL routing
+    assert_eq!(
+        settings.path_for_url("https://example.com/download.zip"),
+        PathBuf::from("C:\\Users\\user\\Downloads\\Archives")
+    );
+    assert_eq!(
+        settings.path_for_url("https://example.com/download.tar.gz"),
+        PathBuf::from("C:\\Users\\user\\Downloads\\Archives")
+    );
+    assert_eq!(
+        settings.path_for_url("https://example.com/movie.mkv"),
+        PathBuf::from("E:\\Media\\Videos")
+    );
+    assert_eq!(
+        settings.path_for_url("https://example.com/song.flac"),
+        PathBuf::from("C:\\Users\\user\\Downloads\\Music")
+    );
+    assert_eq!(
+        settings.path_for_url("https://example.com/doc.pdf"),
+        PathBuf::from("C:\\Users\\user\\Downloads\\Documents")
+    );
+    assert_eq!(
+        settings.path_for_url("https://example.com/installer.msi"),
+        PathBuf::from("C:\\Users\\user\\Downloads\\Programs")
+    );
+    assert_eq!(
+        settings.path_for_url("https://example.com/api/data?format=raw"),
+        PathBuf::from("C:\\Users\\user\\Downloads")
+    );
+    // Extended file formats
+    assert_eq!(
+        settings.path_for_url("https://example.com/data.tar.bz2"),
+        PathBuf::from("C:\\Users\\user\\Downloads\\Archives")
+    );
+    assert_eq!(
+        settings.path_for_url("https://example.com/audio.opus"),
+        PathBuf::from("C:\\Users\\user\\Downloads\\Music")
+    );
+    assert_eq!(
+        settings.path_for_url("https://example.com/sheet.csv"),
+        PathBuf::from("C:\\Users\\user\\Downloads\\Documents")
+    );
+}
+
+#[test]
+fn options_category_defaults_cascade_on_default_dir_change() {
+    use super::app::update_category_defaults;
+    use super::save_settings::{Category, SaveSettings};
+
+    let ui = MainWindow::new().unwrap();
+    let old_def = PathBuf::from("C:\\Users\\user\\Downloads");
+    let new_def = PathBuf::from("D:\\Downloads");
+
+    // Initialize with default subfolders, except Music which has a custom folder
+    set_option_dir(&ui, 0, &old_def.to_string_lossy());
+    set_option_dir(
+        &ui,
+        1,
+        &SaveSettings::default_subfolder(&old_def, Category::Compressed).to_string_lossy(),
+    );
+    set_option_dir(
+        &ui,
+        2,
+        &SaveSettings::default_subfolder(&old_def, Category::Documents).to_string_lossy(),
+    );
+    set_option_dir(&ui, 3, "E:\\CustomMusic");
+    set_option_dir(
+        &ui,
+        4,
+        &SaveSettings::default_subfolder(&old_def, Category::Programs).to_string_lossy(),
+    );
+    set_option_dir(
+        &ui,
+        5,
+        &SaveSettings::default_subfolder(&old_def, Category::Video).to_string_lossy(),
+    );
+
+    // Cascading update on default dir change
+    update_category_defaults(&ui, &old_def, &new_def);
+    set_option_dir(&ui, 0, &new_def.to_string_lossy());
+
+    // Compressed, Documents, Programs, Video should now point to new_def subfolders
+    assert_eq!(
+        option_dir(&ui, 1),
+        SaveSettings::default_subfolder(&new_def, Category::Compressed)
+            .to_string_lossy()
+            .into_owned()
+    );
+    assert_eq!(
+        option_dir(&ui, 2),
+        SaveSettings::default_subfolder(&new_def, Category::Documents)
+            .to_string_lossy()
+            .into_owned()
+    );
+    assert_eq!(
+        option_dir(&ui, 4),
+        SaveSettings::default_subfolder(&new_def, Category::Programs)
+            .to_string_lossy()
+            .into_owned()
+    );
+    assert_eq!(
+        option_dir(&ui, 5),
+        SaveSettings::default_subfolder(&new_def, Category::Video)
+            .to_string_lossy()
+            .into_owned()
+    );
+
+    // Custom music folder should remain untouched
+    assert_eq!(option_dir(&ui, 3), "E:\\CustomMusic");
+}
+
+#[test]
+fn routed_categories_agree_with_history_file_types() {
+    use super::save_settings::Category;
+
+    let settings = SaveSettings::default();
+    for category in Category::ALL {
+        for extension in category.extensions() {
+            let filename = format!("sample.{extension}");
+            assert_eq!(
+                settings.category_for_filename(&filename),
+                category,
+                "{filename} routed to {category:?} must match its listed file type"
+            );
+        }
+    }
+
+    assert_eq!(
+        settings.category_for_filename("sample.unknown"),
+        Category::General,
+        "Extensions outside the classifier fall back to the default directory"
+    );
+
+    let mut custom = SaveSettings::default();
+    custom
+        .file_types
+        .insert(Category::Music, vec!["mod".into()]);
+    assert_eq!(
+        custom.category_for_filename("track.mod"),
+        Category::Music,
+        "A custom extension classifies as its edited category"
+    );
+}
+
+#[test]
+fn built_in_file_type_lists_are_verbose_and_disjoint() {
+    use super::save_settings::Category;
+    use std::collections::BTreeSet;
+
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for category in Category::ALL {
+        let extensions = category.extensions();
+        if category == Category::General {
+            assert!(extensions.is_empty(), "General catches everything else");
+            continue;
+        }
+        let minimum = if category == Category::Torrents {
+            3
+        } else {
+            30
+        };
+        assert!(
+            extensions.len() >= minimum,
+            "{category:?} lists {} extensions, expected at least {minimum}",
+            extensions.len()
+        );
+        for extension in extensions {
+            assert_eq!(
+                *extension,
+                extension.to_ascii_lowercase().as_str(),
+                "{extension} must be stored lowercase"
+            );
+            assert!(
+                seen.insert(*extension),
+                "{extension} is listed in more than one category"
+            );
+        }
+    }
+}
+
+#[test]
+fn new_categories_route_their_representative_extensions() {
+    use super::save_settings::Category;
+
+    let settings = SaveSettings::default();
+    for (filename, expected) in [
+        ("disk.iso", Category::DiskImages),
+        ("book.epub", Category::Ebooks),
+        ("photo.heic", Category::Images),
+        ("main.rs", Category::SourceCode),
+        ("ubuntu.torrent", Category::Torrents),
+        ("data.sqlite", Category::Databases),
+        ("report.doc", Category::Documents),
+        ("archive.7z", Category::Compressed),
+    ] {
+        assert_eq!(
+            settings.category_for_filename(filename),
+            expected,
+            "{filename} must route to {expected:?}"
+        );
+    }
+
+    assert_eq!(
+        settings.path_for_url("https://example.com/disk.iso"),
+        settings.category_path(Category::DiskImages)
+    );
+    assert!(
+        settings
+            .category_path(Category::SourceCode)
+            .ends_with("Source Code"),
+        "New categories use their display subfolder"
+    );
+}
+
+#[test]
+fn options_category_switch_preserves_other_category_dirs() -> Result<(), Box<dyn std::error::Error>>
+{
+    use super::save_settings::Category;
+    use slint::platform::WindowEvent;
+
+    let (window, _clipboard) = install_test_platform()?;
+    let ui = MainWindow::new()?;
+    ui.show()?;
+    window.set_size(slint::PhysicalSize::new(960, 540));
+
+    let render = || {
+        window.draw_if_needed(|renderer| {
+            let mut pixels = vec![slint::Rgb8Pixel::default(); 960 * 540];
+            renderer.render(&mut pixels, 960);
+        });
+    };
+
+    let names: Vec<slint::SharedString> = Category::ALL
+        .iter()
+        .map(|category| category.display_name().into())
+        .collect();
+    ui.set_options_category_names(Rc::new(slint::VecModel::from(names)).into());
+    ui.set_options_selected_tab(2);
+    set_option_dir(&ui, 0, "D:\\Downloads");
+    set_option_dir(&ui, 1, "D:\\Downloads\\Compressed");
+    ui.set_show_options_dialog(true);
+    render();
+
+    // Tab moves focus to the category combo; DownArrow selects Compressed.
+    let key = |text: slint::SharedString| window.dispatch_event(WindowEvent::KeyPressed { text });
+    key(slint::platform::Key::Tab.into());
+    key(slint::platform::Key::Tab.into());
+    key(slint::platform::Key::DownArrow.into());
+
+    assert_eq!(ui.get_options_save_category(), 1);
+    assert_eq!(
+        option_dir(&ui, 1),
+        "D:\\Downloads\\Compressed",
+        "Switching to a category must not copy the previous category's path into it"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn options_file_types_edit_each_category_separately() -> Result<(), Box<dyn std::error::Error>> {
+    use super::save_settings::Category;
+    use slint::platform::{Key, WindowEvent};
+
+    let (window, _clipboard) = install_test_platform()?;
+    let ui = MainWindow::new()?;
+    ui.show()?;
+    window.set_size(slint::PhysicalSize::new(960, 540));
+
+    let names: Vec<slint::SharedString> = Category::ALL
+        .iter()
+        .map(|category| category.display_name().into())
+        .collect();
+    ui.set_options_category_names(Rc::new(slint::VecModel::from(names)).into());
+    ui.set_options_selected_tab(2);
+    set_option_file_types(&ui, 1, "zip, rar");
+    set_option_file_types(&ui, 5, "mp4");
+    ui.set_show_options_dialog(true);
+
+    let key = |text: slint::SharedString| window.dispatch_event(WindowEvent::KeyPressed { text });
+    let replace_text = |text: &str| {
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Control.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed { text: "a".into() });
+        window.dispatch_event(WindowEvent::KeyReleased { text: "a".into() });
+        window.dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Control.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed { text: text.into() });
+    };
+
+    // Strip -> category combo -> Compressed, then on to the file types field.
+    key(Key::Tab.into());
+    key(Key::Tab.into());
+    key(Key::DownArrow.into());
+    assert_eq!(ui.get_options_save_category(), 1);
+    for _ in 0..4 {
+        key(Key::Tab.into());
+    }
+
+    replace_text("7z, tar");
+    assert_eq!(
+        option_file_types(&ui, 1),
+        "7z, tar",
+        "Typing in the file types field edits the selected category"
+    );
+    assert_eq!(
+        option_file_types(&ui, 5),
+        "mp4",
+        "Other categories keep their own file types"
+    );
+
+    ui.set_options_save_category(5);
+    replace_text("webm");
+    assert_eq!(option_file_types(&ui, 5), "webm");
+    assert_eq!(
+        option_file_types(&ui, 1),
+        "7z, tar",
+        "Switching categories keeps the edited list"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn options_file_types_refresh_when_props_reset_after_open() -> Result<(), Box<dyn std::error::Error>>
+{
+    use slint::platform::{Key, WindowEvent};
+
+    let (window, _clipboard) = install_test_platform()?;
+    let ui = MainWindow::new()?;
+    ui.show()?;
+    window.set_size(slint::PhysicalSize::new(960, 540));
+
+    ui.set_options_selected_tab(2);
+    ui.set_options_save_category(1);
+    set_option_file_types(&ui, 1, "zip");
+    ui.set_show_options_dialog(true);
+    window.draw_if_needed(|renderer| {
+        let mut pixels = vec![slint::Rgb8Pixel::default(); 960 * 540];
+        renderer.render(&mut pixels, 960);
+    });
+
+    // Mimic on_options_opened resetting the prop after the dialog materialized with old text.
+    set_option_file_types(&ui, 1, "png");
+
+    let key = |text: slint::SharedString| window.dispatch_event(WindowEvent::KeyPressed { text });
+    key(Key::Tab.into());
+    key(Key::Tab.into());
+    for _ in 0..4 {
+        key(Key::Tab.into());
+    }
+    key("!".into());
+
+    let value = option_file_types(&ui, 1).to_string();
+    assert!(
+        value.contains('!'),
+        "the keystroke must reach the file types field, got {value:?}"
+    );
+    assert!(
+        value.contains("png"),
+        "the field must show the refreshed list, got {value:?}"
+    );
+    assert!(
+        !value.contains("zip"),
+        "the field must not keep the pre-reset text, got {value:?}"
+    );
+
+    Ok(())
 }

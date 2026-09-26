@@ -29,6 +29,14 @@ export component MainWindow inherits Window {
     in-out property <bool> show_options_dialog: false;
     in-out property <int> options_selected_tab: 0;
     in-out property <bool> options_launch_on_startup: false;
+    in-out property <[string]> options_category_dirs: [
+        "", "", "", "", "", "", "", "", "", "", "", "",
+    ];
+    in-out property <[string]> options_category_file_types: [
+        "", "", "", "", "", "", "", "", "", "", "", "",
+    ];
+    in-out property <int> options_save_category: 0;
+    in property <[string]> options_category_names: [];
     in-out property <bool> startup_option_visible: false;
     in-out property <bool> show_delete_dialog: false;
     in-out property <bool> show_duplicate_dialog: false;
@@ -54,6 +62,7 @@ export component MainWindow inherits Window {
     in-out property <bool> is_resumable: false;
     in-out property <string> active_filename: "";
     in-out property <string> active_file_type: "doc";
+    in-out property <int> active_category_id: 0;
     in-out property <string> active_size: "0 B";
     in-out property <string> active_status: "Idle";
     in-out property <color> active_status_color: Palette.text-faint;
@@ -62,21 +71,17 @@ export component MainWindow inherits Window {
     in-out property <string> active_downloaded: "Today";
     in-out property <string> active_error_message: "";
     in-out property <string> action_error_message: "";
-    pure function category_matches(category: int, file_type: string, completed: bool) -> bool {
+    pure function category_matches(category: int, item_category: int, completed: bool) -> bool {
         return category == 0
-            || (category == 1 && file_type == "zip")
-            || (category == 2 && file_type == "doc")
-            || (category == 3 && file_type == "audio")
-            || (category == 4 && file_type == "exe")
-            || (category == 5 && file_type == "video")
-            || (category == 6 && !completed)
-            || (category == 7 && completed);
+            || (category <= 11 && category == item_category)
+            || (category == 12 && !completed)
+            || (category == 13 && completed);
     }
     // The active download keeps the separate top row only while it is unfinished. Once it
     // finishes it is listed as a normal, sortable row instead.
     out property <bool> current_unfinished: root.has_active_download && !root.is_completed;
     out property <bool> active_row_visible: root.current_unfinished && root.category_matches(
-        root.selected_category, root.active_file_type, false);
+        root.selected_category, root.active_category_id, false);
     out property <bool> can_resume: !root.show_duplicate_dialog && root.active_row_visible && root.selected_row == 0 && root.is_paused;
     out property <bool> can_stop: !root.show_duplicate_dialog && root.active_row_visible && root.selected_row == 0 && root.is_downloading;
     out property <bool> can_stop_all: !root.show_duplicate_dialog && root.has_active_download && root.is_downloading;
@@ -125,9 +130,16 @@ export component MainWindow inherits Window {
     callback step_selection(int);
     /// The category changed, so the selected row may no longer be listed.
     callback selected_category_changed();
+    callback browse_options_folder(int);
+    callback reset_options_category_default(int);
+    callback default_dir_edited(string, string);
+    callback add_dialog_opened();
+    callback url_text_changed(string);
 
     changed selected_category => { root.selected_category_changed(); }
     changed show_options_dialog => { if (root.show_options_dialog) { root.options_opened(); } }
+    changed show_add_dialog => { if (root.show_add_dialog) { root.add_dialog_opened(); } }
+    changed url_text => { root.url_text_changed(root.url_text); }
 
     public function close-delete-dialog() {
         root.show_delete_dialog = false;
@@ -237,6 +249,13 @@ export component MainWindow inherits Window {
         selected-tab <=> root.options_selected_tab;
         launch-on-startup <=> root.options_launch_on_startup;
         startup-option-visible: root.startup_option_visible;
+        save-to-category <=> root.options_save_category;
+        category-dirs <=> root.options_category_dirs;
+        category-file-types <=> root.options_category_file_types;
+        category-names: root.options_category_names;
+        browse-category-folder(cat) => { root.browse_options_folder(cat); }
+        reset-category-default(cat) => { root.reset_options_category_default(cat); }
+        default-dir-edited(old, new) => { root.default_dir_edited(old, new); }
         confirm(from_keyboard) => {
             root.show_options_dialog = false;
             root.commit_options(root.options_launch_on_startup);

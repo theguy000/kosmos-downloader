@@ -1,10 +1,17 @@
 import { Palette } from "theme.slint";
-import { DialogCheckBox, FocusStyle, PointerButton } from "controls.slint";
+import { DialogCheckBox, DialogComboBox, DialogInput, FocusStyle, PointerButton } from "controls.slint";
 
 export component OptionsDialog inherits Rectangle {
     in-out property <int> selected_tab: 0;
     in-out property <bool> launch_on_startup: false;
     in property <bool> startup_option_visible: false;
+    in property <[string]> category_names: [];
+
+    // Save To tab properties. Index 0 is the default directory.
+    in-out property <int> save_to_category: 0;
+    in-out property <[string]> category_dirs: [];
+    in-out property <[string]> category_file_types: [];
+
     private property <[string]> tab_names: [
         "General",
         "File Types",
@@ -15,25 +22,55 @@ export component OptionsDialog inherits Rectangle {
         "Advanced",
     ];
 
-    // Focus stops: 0 = tab strip, 1 = startup checkbox (General only), then OK and Cancel.
     private property <bool> startup_stop: root.startup_option_visible && root.selected_tab == 0;
-    private property <int> stop_count: root.startup_stop ? 4 : 3;
+    private property <bool> save_to_tab: root.selected_tab == 2;
+    private property <int> stop_count: root.startup_stop ? 4
+        : (root.save_to_tab ? (root.save_to_category == 0 ? 7 : 8) : 3);
+
+    private property <string> current_category_name:
+        root.category_names.length > root.save_to_category
+            ? root.category_names[root.save_to_category]
+            : "";
+
     private property <int> focus_index: strip_focus.has-focus ? 0
         : (root.startup_stop && startup_box.has-keyboard-focus ? 1
+        : (root.save_to_tab && category_combo.has_keyboard_focus ? 1
+        : (root.save_to_tab && path_input.has_keyboard_focus ? 2
+        : (root.save_to_tab && browse_button.has-keyboard-focus ? 3
+        : (root.save_to_tab && reset_button.has-keyboard-focus ? 4
+        : (root.save_to_tab && types_input.has-keyboard_focus ? 5
         : (ok_button.has-keyboard-focus ? root.stop_count - 2
-        : (cancel_button.has-keyboard-focus ? root.stop_count - 1 : -1)));
+        : (cancel_button.has-keyboard-focus ? root.stop_count - 1 : -1))))))));
+
     private property <bool> keyboard_focused: false;
 
     callback dismiss(bool);
     callback confirm(bool);
+    callback browse_category_folder(int);
+    callback reset_category_default(int);
+    callback default_dir_edited(string, string);
+
+    function sync_to_input() {
+        path_input.text = root.category_dirs[root.save_to_category];
+        types_input.text = root.category_file_types[root.save_to_category];
+    }
 
     function focus-item(index: int) {
         root.keyboard_focused = index == 0;
         if index == 0 { strip_focus.focus(); }
         else if root.startup_stop && index == 1 { startup_box.take-focus(); }
+        else if root.save_to_tab && index == 1 { category_combo.take-focus(); }
+        else if root.save_to_tab && index == 2 { path_input.take-focus(); }
+        else if root.save_to_tab && index == 3 { browse_button.take-focus(); }
+        else if root.save_to_tab && index == 4 { reset_button.take-focus(); }
+        else if root.save_to_tab && root.save_to_category != 0 && index == 5 { types_input.take-focus(); }
         else if index == root.stop_count - 2 { ok_button.take-focus(); }
         else { cancel_button.take-focus(); }
     }
+
+    changed category_dirs => { root.sync_to_input(); }
+    changed category_file_types => { root.sync_to_input(); }
+    changed save_to_category => { root.sync_to_input(); }
 
     background: Palette.overlay;
     forward-focus: dialog_focus;
@@ -175,6 +212,7 @@ export component OptionsDialog inherits Rectangle {
                     background: Palette.background;
 
                     VerticalLayout {
+                        visible: root.selected_tab == 0;
                         alignment: start;
                         padding: 16px;
                         spacing: 8px;
@@ -183,6 +221,129 @@ export component OptionsDialog inherits Rectangle {
                             visible: root.startup_stop;
                             checked <=> root.launch_on_startup;
                             text: "Launch Kosmos Downloader on startup";
+                        }
+                    }
+
+                    VerticalLayout {
+                        visible: root.selected_tab == 2;
+                        alignment: start;
+                        padding: 16px;
+                        spacing: 12px;
+
+                        // Category selector row
+                        HorizontalLayout {
+                            spacing: 12px;
+                            height: 32px;
+
+                            Text {
+                                text: "Category:";
+                                width: 70px;
+                                font-size: 12px;
+                                color: Palette.text-muted;
+                                vertical-alignment: center;
+                            }
+
+                            category_combo := DialogComboBox {
+                                width: 200px;
+                                label: "Category";
+                                current_index <=> root.save_to_category;
+                                items: root.category_names;
+                            }
+
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+
+                        // Directory label
+                        Text {
+                            text: root.save_to_category == 0
+                                ? "Default download directory:"
+                                : "Default download directory for \"" + root.current_category_name + "\" category:";
+                            font-size: 11px;
+                            color: Palette.text-muted;
+                        }
+
+                        // Directory input row
+                        HorizontalLayout {
+                            spacing: 8px;
+                            height: 36px;
+
+                            path_input := DialogInput {
+                                text: root.category_dirs[root.save_to_category];
+                                label: "Download directory";
+                                edited(text) => {
+                                    // ponytail: the old default is captured before the write so
+                                    // Rust can cascade category subfolders from it.
+                                    let old_default = root.category_dirs[0];
+                                    root.category_dirs[root.save_to_category] = text;
+                                    if root.save_to_category == 0 {
+                                        root.default_dir_edited(old_default, text);
+                                    }
+                                }
+                            }
+
+                            browse_button := PointerButton {
+                                text: "Browse";
+                                filled: true;
+                                clicked => {
+                                    root.browse_category_folder(root.save_to_category);
+                                }
+                            }
+
+                            reset_button := PointerButton {
+                                text: "Default";
+                                filled: true;
+                                clicked => {
+                                    root.reset_category_default(root.save_to_category);
+                                }
+                            }
+                        }
+
+                        // File types row. General catches everything else, so it has no list.
+                        HorizontalLayout {
+                            spacing: 12px;
+                            height: 36px;
+
+                            Text {
+                                text: "File types:";
+                                width: 70px;
+                                font-size: 12px;
+                                color: Palette.text-muted;
+                                vertical-alignment: center;
+                            }
+
+                            Rectangle {
+                                horizontal-stretch: 1;
+
+                                types_input := DialogInput {
+                                    width: 100%;
+                                    height: 100%;
+                                    visible: root.save_to_category != 0;
+                                    text: root.category_file_types[root.save_to_category];
+                                    label: "File types";
+                                    placeholder-text: "e.g. zip, rar, 7z";
+                                    edited(text) => {
+                                        root.category_file_types[root.save_to_category] = text;
+                                    }
+                                }
+
+                                Text {
+                                    x: 0px;
+                                    width: 100%;
+                                    height: 100%;
+                                    visible: root.save_to_category == 0;
+                                    text: "All other file types";
+                                    font-size: 12px;
+                                    color: Palette.text-muted;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        if root.save_to_category == 0: Text {
+                            text: "Files that do not match other categories will be saved here.";
+                            font-size: 11px;
+                            color: Palette.text-muted;
+                            overflow: elide;
                         }
                     }
                 }
@@ -197,7 +358,9 @@ export component OptionsDialog inherits Rectangle {
                     ok_button := PointerButton {
                         text: "OK";
                         primary: true;
-                        clicked(from_keyboard) => { root.confirm(from_keyboard); }
+                        clicked(from_keyboard) => {
+                            root.confirm(from_keyboard);
+                        }
                     }
 
                     cancel_button := PointerButton {

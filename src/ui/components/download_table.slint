@@ -8,6 +8,7 @@ export struct TableItem {
     id: int,
     filename: string,
     file_type: string,
+    category_id: int,
     size_text: string,
     status_text: string,
     time_left_text: string,
@@ -259,15 +260,11 @@ export component DownloadTable inherits ScrollView {
     /// A sortable header was activated.
     callback sort_requested(int);
     callback save_column_widths();
-    pure function category_matches(category: int, file_type: string, completed: bool) -> bool {
+    pure function category_matches(category: int, item_category: int, completed: bool) -> bool {
         return category == 0
-            || (category == 1 && file_type == "zip")
-            || (category == 2 && file_type == "doc")
-            || (category == 3 && file_type == "audio")
-            || (category == 4 && file_type == "exe")
-            || (category == 5 && file_type == "video")
-            || (category == 6 && !completed)
-            || (category == 7 && completed);
+            || (category <= 11 && category == item_category)
+            || (category == 12 && !completed)
+            || (category == 13 && completed);
     }
 
     content-width: max(self.visible-width, root.total_columns_width);
@@ -427,7 +424,7 @@ export component DownloadTable inherits ScrollView {
 
             for item[idx] in root.sample_downloads: Rectangle {
                 property <bool> is_visible: root.category_matches(
-                    root.selected_category, item.file_type, true);
+                    root.selected_category, item.category_id, true);
                 // The keyboard marks the selected row, or the first listed row when the table
                 // has no selection yet. A click selects the row without painting the ring.
                 property <bool> is_focused: list_focus.has-focus && root.keyboard_focused
@@ -474,18 +471,18 @@ export component DownloadTable inherits ScrollView {
         }
 
         Rectangle {
-            if root.total_items == 0 || (root.selected_category == 6 && !root.active_row_visible): VerticalLayout {
+            if root.total_items == 0 || (root.selected_category == 12 && !root.active_row_visible): VerticalLayout {
                 padding: 24px;
                 spacing: 6px;
                 alignment: center;
                 Text {
-                    text: root.selected_category == 6 ? "No unfinished downloads" : "No downloads";
+                    text: root.selected_category == 12 ? "No unfinished downloads" : "No downloads";
                     color: Palette.text-secondary;
                     font-size: 13px;
                     horizontal-alignment: center;
                 }
                 Text {
-                    text: root.selected_category == 6 ? "Active, stopped, and failed downloads appear here." :
+                    text: root.selected_category == 12 ? "Active, stopped, and failed downloads appear here." :
                         "Choose Add URL to start a download.";
                     color: Palette.text-muted;
                     font-size: 11px;

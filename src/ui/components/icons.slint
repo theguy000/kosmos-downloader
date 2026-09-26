@@ -74,7 +74,7 @@ export component IconFolder inherits Path {
 
 export component IconDoc inherits Path {
     width: 13px; height: 13px;
-    commands: "M 2 1.5 L 7.5 1.5 L 11 5 L 11 11.5 L 2 11.5 Z M 7.5 1.5 L 7.5 5 L 11 5 M 4 7 L 8.5 7 M 4 9 L 7 9";
+    commands: "M 2 1.5 L 7.5 1.5 L 11 5 L 11 11.5 L 2 11.5 Z M 7.5 1.5 L 7.5 5 L 11 5 M 4 4.5 L 6 4.5 M 4 7 L 9 7 M 4 9.5 L 7.5 9.5";
     stroke: Palette.icon;
     stroke-width: 1.2px;
 }
@@ -88,7 +88,7 @@ export component IconMedia inherits Path {
 
 export component IconArchive inherits Path {
     width: 13px; height: 13px;
-    commands: "M 2 1.5 L 11 1.5 L 11 11.5 L 2 11.5 Z M 5 1.5 L 5 3 M 5 4.5 L 7 4.5 M 5 6.5 L 7 6.5 M 5 8.5 L 7 8.5 L 7 10 L 5 10 Z";
+    commands: "M 2 1.5 L 11 1.5 L 11 11.5 L 2 11.5 Z M 2 6.5 L 11 6.5 M 5 4 L 8 4 M 5 9 L 8 9";
     stroke: Palette.icon;
     stroke-width: 1.2px;
 }
@@ -153,6 +153,48 @@ export component IconSidebarToggle inherits Path {
     stroke-width: 1.2px;
 }
 
+export component IconImage inherits Path {
+    width: 13px; height: 13px;
+    commands: "M 1.5 2.5 L 11.5 2.5 L 11.5 10.5 L 1.5 10.5 Z M 1.5 9.5 L 4.5 6 L 7.5 9.5 L 9 7.5 L 11.5 10 M 8.5 4.5 A 1 1 0 1 1 8.5 4.49 Z";
+    stroke: Palette.icon;
+    stroke-width: 1.2px;
+}
+
+export component IconEbook inherits Path {
+    width: 13px; height: 13px;
+    commands: "M 6.5 3.5 L 1.5 2.5 L 1.5 10.5 L 6.5 11.5 L 11.5 10.5 L 11.5 2.5 L 6.5 3.5 Z M 6.5 3.5 L 6.5 11.5";
+    stroke: Palette.icon;
+    stroke-width: 1.2px;
+}
+
+export component IconCode inherits Path {
+    width: 13px; height: 13px;
+    commands: "M 4.5 3.5 L 1.5 6.5 L 4.5 9.5 M 8.5 3.5 L 11.5 6.5 L 8.5 9.5 M 7.5 2.5 L 5.5 10.5";
+    stroke: Palette.icon;
+    stroke-width: 1.2px;
+}
+
+export component IconDisk inherits Path {
+    width: 13px; height: 13px;
+    commands: "M 6.5 1.5 A 5 5 0 1 1 6.5 11.5 A 5 5 0 1 1 6.5 1.5 Z M 6.5 5 A 1.5 1.5 0 1 1 6.5 8 A 1.5 1.5 0 1 1 6.5 5 Z";
+    stroke: Palette.icon;
+    stroke-width: 1.2px;
+}
+
+export component IconTorrent inherits Path {
+    width: 13px; height: 13px;
+    commands: "M 2 2.5 L 2 7 A 4.5 4.5 0 0 0 11 7 L 11 2.5 M 5 2.5 L 5 7 A 1.5 1.5 0 0 0 8 7 L 8 2.5 M 2 4.5 L 5 4.5 M 8 4.5 L 11 4.5 M 2 2.5 L 5 2.5 M 8 2.5 L 11 2.5";
+    stroke: Palette.icon;
+    stroke-width: 1.2px;
+}
+
+export component IconDatabase inherits Path {
+    width: 13px; height: 13px;
+    commands: "M 2 3.5 A 4.5 1.5 0 1 1 11 3.5 A 4.5 1.5 0 1 1 2 3.5 Z M 2 3.5 L 2 7.5 A 4.5 1.5 0 0 0 11 7.5 L 11 3.5 M 2 7.5 L 2 10.5 A 4.5 1.5 0 0 0 11 10.5 L 11 7.5";
+    stroke: Palette.icon;
+    stroke-width: 1.2px;
+}
+
 export component FileTypeIcon inherits VerticalLayout {
     in property <string> file-type;
     alignment: center;
@@ -162,4 +204,10 @@ export component FileTypeIcon inherits VerticalLayout {
     if root.file-type == "video": IconMedia {}
     if root.file-type == "audio": IconAudio {}
     if root.file-type == "doc": IconDoc {}
+    if root.file-type == "image": IconImage {}
+    if root.file-type == "ebook": IconEbook {}
+    if root.file-type == "code": IconCode {}
+    if root.file-type == "iso": IconDisk {}
+    if root.file-type == "torrent": IconTorrent {}
+    if root.file-type == "db": IconDatabase {}
 }

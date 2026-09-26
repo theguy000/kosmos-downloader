@@ -172,7 +172,12 @@ export component PointerButton inherits Rectangle {
     in property <bool> enabled: true;
     out property <bool> has_keyboard_focus: focus.has-focus;
     callback clicked(bool);
-    public function take-focus() { focus.focus(); }
+    public function take-focus() {
+        root.keyboard_focused = true;
+        focus.focus();
+    }
+
+    private property <bool> keyboard_focused: false;
 
     width: root.text == "Download" ? 88px : 72px;
     height: 36px;
@@ -189,7 +194,7 @@ export component PointerButton inherits Rectangle {
     accessible-action-default => { if root.enabled { root.clicked(true); } }
 
     // Drawn outside the fill, with a 1px gap, so the ring stays visible on accent-filled buttons.
-    if root.enabled && focus.has-focus: Rectangle {
+    if root.enabled && focus.has-focus && root.keyboard_focused: Rectangle {
         x: -2px;
         y: -2px;
         width: parent.width + 4px;
@@ -210,6 +215,7 @@ export component PointerButton inherits Rectangle {
     focus := FocusScope {
         enabled: root.enabled;
         key-pressed(event) => {
+            root.keyboard_focused = true;
             if event.text == Key.Space || event.text == Key.Return {
                 root.clicked(true);
                 return accept;
@@ -220,7 +226,11 @@ export component PointerButton inherits Rectangle {
     touch := TouchArea {
         enabled: root.enabled;
         mouse-cursor: root.enabled ? pointer : default;
-        clicked => { focus.focus(); root.clicked(false); }
+        clicked => {
+            root.keyboard_focused = false;
+            focus.focus();
+            root.clicked(false);
+        }
     }
 }
 
@@ -406,6 +416,7 @@ export component DialogInput inherits Rectangle {
     out property <bool> has_keyboard_focus: input.has-focus;
     public function take-focus() { input.focus(); }
     callback accepted();
+    callback edited(string);
     private property <length> menu-x;
     private property <length> menu-y;
     private property <int> menu-index: -1;
@@ -464,6 +475,7 @@ export component DialogInput inherits Rectangle {
             text <=> root.text;
             single-line: true;
             accepted => { root.accepted(); }
+            edited => { root.edited(self.text); }
             font-size: 12px;
             color: Palette.text-primary;
             selection-background-color: Palette.accent;
@@ -626,3 +638,178 @@ export component DialogSlider inherits Rectangle {
         accessible-label: "Streams";
     }
 }
+
+export component DialogComboBox inherits Rectangle {
+    in property <string> label: "";
+    in property <[string]> items;
+    in-out property <int> current_index: 0;
+    out property <bool> has_keyboard_focus: combo_focus.has-focus;
+    callback selected(int);
+    public function take-focus() {
+        root.keyboard_focused = true;
+        combo_focus.focus();
+    }
+
+    private property <int> popup_index: root.current_index;
+    private property <bool> keyboard_focused: false;
+
+    height: 32px;
+    background: touch.pressed ? Palette.control-pressed : (touch.has-hover ? Palette.control-active : Palette.control);
+    border-width: 1px;
+    border-color: combo_focus.has-focus && root.keyboard_focused ? FocusStyle.ring : transparent;
+    forward-focus: combo_focus;
+    accessible-role: combobox;
+    accessible-label: root.label;
+    accessible-value: root.items[root.current_index];
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 6px;
+
+        Text {
+            text: root.items[root.current_index];
+            font-size: 12px;
+            color: Palette.text-primary;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+
+        Rectangle {
+            width: 8px;
+            IconChevronDown {
+                x: 0px;
+                y: (parent.height - self.height) / 2;
+                width: 8px;
+                height: 8px;
+                stroke: touch.has-hover ? Palette.text-primary : Palette.text-muted;
+            }
+        }
+    }
+
+    combo_focus := FocusScope {
+        key-pressed(event) => {
+            root.keyboard_focused = true;
+            if event.text == Key.UpArrow || event.text == Key.LeftArrow {
+                if root.current_index > 0 {
+                    root.current_index = root.current_index - 1;
+                    root.selected(root.current_index);
+                }
+                return accept;
+            }
+            if event.text == Key.DownArrow || event.text == Key.RightArrow {
+                if root.current_index < root.items.length - 1 {
+                    root.current_index = root.current_index + 1;
+                    root.selected(root.current_index);
+                }
+                return accept;
+            }
+            if event.text == Key.Space || event.text == Key.Return {
+                root.popup_index = root.current_index;
+                combo_popup.show();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.keyboard_focused = false;
+            combo_focus.focus();
+            root.popup_index = root.current_index;
+            combo_popup.show();
+        }
+    }
+
+    combo_popup := PopupWindow {
+        x: 0px;
+        y: root.height;
+        width: root.width;
+        close-policy: close-on-click-outside;
+        forward-focus: popup_focus;
+
+        Rectangle {
+            background: Palette.surface;
+            border-width: 1px;
+            border-color: Palette.border-popup;
+
+            popup_focus := FocusScope {
+                key-pressed(event) => {
+                    root.keyboard_focused = true;
+                    if event.text == Key.UpArrow {
+                        if root.popup_index > 0 {
+                            root.popup_index = root.popup_index - 1;
+                        }
+                        return accept;
+                    }
+                    if event.text == Key.DownArrow {
+                        if root.popup_index < root.items.length - 1 {
+                            root.popup_index = root.popup_index + 1;
+                        }
+                        return accept;
+                    }
+                    if event.text == Key.Space || event.text == Key.Return {
+                        root.current_index = root.popup_index;
+                        root.selected(root.popup_index);
+                        combo_popup.close();
+                        combo_focus.focus();
+                        return accept;
+                    }
+                    if event.text == Key.Escape || event.text == Key.Tab {
+                        combo_popup.close();
+                        combo_focus.focus();
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
+
+            VerticalLayout {
+                padding: 4px;
+                spacing: 0px;
+
+                for item[index] in root.items: Rectangle {
+                    height: 28px;
+                    background: item_touch.pressed ? Palette.selection-pressed :
+                        (root.popup_index == index ? Palette.control-active :
+                        (item_touch.has-hover ? Palette.hover-subtle : transparent));
+                    accessible-role: button;
+                    accessible-label: item;
+
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+
+                        Text {
+                            text: item;
+                            font-size: 12px;
+                            font-weight: root.current_index == index ? 600 : 400;
+                            color: root.current_index == index ? Palette.accent-text : Palette.text-primary;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    item_touch := TouchArea {
+                        mouse-cursor: pointer;
+                        changed has-hover => {
+                            if self.has-hover {
+                                root.popup_index = index;
+                            }
+                        }
+                        clicked => {
+                            root.keyboard_focused = false;
+                            root.current_index = index;
+                            root.selected(index);
+                            combo_popup.close();
+                            combo_focus.focus();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+

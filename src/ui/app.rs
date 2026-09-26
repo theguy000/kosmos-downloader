@@ -2,14 +2,16 @@ use super::platform::{
     default_download_directory, open_file, set_startup_enabled, startup_enabled,
 };
 use super::projection::{
-    category_matches, file_type_from_filename, history_table_item, should_project_snapshot,
-    sort_items, update_window_state,
+    category_matches_id, history_table_item, should_project_snapshot, sort_items,
+    update_window_state,
 };
+use super::save_settings::{Category, SaveSettings};
 use super::table_settings::TableColumnWidths;
 use super::view::{MainWindow, TableItem};
 use crate::engine::{DownloadAction, DownloadSnapshot, DownloadStatus, DuplicateChoice};
 use crate::history::{HistoryEntry, HistoryStore, now_unix_ms};
 use slint::ComponentHandle;
+use slint::Model;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -153,42 +155,41 @@ fn finished_download(id: i32, snap: &DownloadSnapshot) -> HistoryEntry {
     }
 }
 
-pub(super) fn update_selection_state(window: &MainWindow, store: &HistoryStore, selected_id: i32) {
+pub(super) fn update_selection_state(window: &MainWindow, selected_id: i32) {
     if selected_id <= 0 {
         window.set_history_row_selected(false);
         return;
     }
+    use slint::Model;
     let category = window.get_selected_category();
-    let is_valid = store.entries().iter().any(|entry| {
-        entry.id == selected_id
-            && category_matches(category, file_type_from_filename(&entry.filename), true)
+    let is_valid = window.get_sample_downloads().iter().any(|item| {
+        item.id == selected_id && category_matches_id(category, item.category_id, true)
     });
     window.set_history_row_selected(is_valid);
 }
 
 /// Ids of the rows the table lists, top to bottom: the active download, then the listed
 /// downloads the current category shows.
-fn listed_row_ids(window: &MainWindow, store: &HistoryStore) -> Vec<i32> {
+fn listed_row_ids(window: &MainWindow) -> Vec<i32> {
+    use slint::Model;
     let category = window.get_selected_category();
     let mut ids = Vec::new();
     if window.get_active_row_visible() {
         ids.push(0);
     }
     ids.extend(
-        store
-            .entries()
+        window
+            .get_sample_downloads()
             .iter()
-            .filter(|entry| {
-                category_matches(category, file_type_from_filename(&entry.filename), true)
-            })
-            .map(|entry| entry.id),
+            .filter(|item| category_matches_id(category, item.category_id, true))
+            .map(|item| item.id),
     );
     ids
 }
 
 /// Moves the selection by `step` listed rows, stopping at either end of the list.
-pub(super) fn step_selection(window: &MainWindow, store: &HistoryStore, step: i32) {
-    let ids = listed_row_ids(window, store);
+pub(super) fn step_selection(window: &MainWindow, step: i32) {
+    let ids = listed_row_ids(window);
     if ids.is_empty() {
         return;
     }
@@ -201,7 +202,7 @@ pub(super) fn step_selection(window: &MainWindow, store: &HistoryStore, step: i3
     };
     let id = ids[next];
     window.set_selected_row(id);
-    update_selection_state(window, store, id);
+    update_selection_state(window, id);
 }
 
 fn remove_row_by_id(model: &slint::VecModel<TableItem>, id: i32) {
@@ -318,6 +319,65 @@ fn spawn_history_file_delete(window: slint::Weak<MainWindow>, id: i32, save_path
     });
 }
 
+fn window_category_dir(window: &MainWindow, category: Category) -> slint::SharedString {
+    window
+        .get_options_category_dirs()
+        .row_data(category.category_id() as usize)
+        .unwrap_or_default()
+}
+
+fn set_window_category_dir(window: &MainWindow, category: Category, value: slint::SharedString) {
+    let mut dirs: Vec<slint::SharedString> = window.get_options_category_dirs().iter().collect();
+    if let Some(dir) = dirs.get_mut(category.category_id() as usize) {
+        *dir = value;
+    }
+    window.set_options_category_dirs(slint::ModelRc::from(dirs.as_slice()));
+}
+
+fn window_category_file_types(window: &MainWindow, category: Category) -> slint::SharedString {
+    window
+        .get_options_category_file_types()
+        .row_data(category.category_id() as usize)
+        .unwrap_or_default()
+}
+
+fn set_window_category_file_types(
+    window: &MainWindow,
+    category: Category,
+    value: slint::SharedString,
+) {
+    let mut types: Vec<slint::SharedString> =
+        window.get_options_category_file_types().iter().collect();
+    if let Some(file_types) = types.get_mut(category.category_id() as usize) {
+        *file_types = value;
+    }
+    window.set_options_category_file_types(slint::ModelRc::from(types.as_slice()));
+}
+
+pub(super) fn update_category_defaults(
+    window: &MainWindow,
+    old_default: &Path,
+    new_default: &Path,
+) {
+    for category in Category::ALL {
+        if category == Category::General {
+            continue;
+        }
+        let current_val = window_category_dir(window, category);
+        let current_path = Path::new(current_val.as_str());
+        let old_sub = SaveSettings::default_subfolder(old_default, category);
+        let next = if current_val.is_empty() || current_path == old_sub {
+            SaveSettings::default_subfolder(new_default, category)
+                .to_string_lossy()
+                .as_ref()
+                .into()
+        } else {
+            current_val
+        };
+        set_window_category_dir(window, category, next);
+    }
+}
+
 pub fn run_app(
     action_tx: &mpsc::Sender<DownloadAction>,
     snapshot_rx: watch::Receiver<DownloadSnapshot>,
@@ -326,13 +386,48 @@ pub fn run_app(
     let displayed_delete_target = Rc::new(RefCell::new(None));
     let pending_delete: Rc<RefCell<Option<PendingDelete>>> = Rc::new(RefCell::new(None));
 
-    let default_dir = default_download_directory();
-    main_window.set_dest_dir_text(default_dir.to_string_lossy().into_owned().into());
+    let save_settings = Rc::new(RefCell::new(SaveSettings::load()));
+    main_window.set_dest_dir_text(
+        save_settings
+            .borrow()
+            .default_dir
+            .to_string_lossy()
+            .as_ref()
+            .into(),
+    );
     main_window.set_startup_option_visible(cfg!(windows));
+    let category_names: Vec<slint::SharedString> = Category::ALL
+        .iter()
+        .map(|category| category.display_name().into())
+        .collect();
+    main_window.set_options_category_names(Rc::new(slint::VecModel::from(category_names)).into());
 
     {
         let window_weak = main_window.as_weak();
+        let save_settings = save_settings.clone();
         main_window.on_options_opened(move || {
+            if let Some(window) = window_weak.upgrade() {
+                let settings = save_settings.borrow();
+                for category in Category::ALL {
+                    set_window_category_dir(
+                        &window,
+                        category,
+                        settings
+                            .category_path(category)
+                            .to_string_lossy()
+                            .as_ref()
+                            .into(),
+                    );
+                    if category != Category::General {
+                        set_window_category_file_types(
+                            &window,
+                            category,
+                            settings.extensions_for(category).join(", ").into(),
+                        );
+                    }
+                }
+            }
+
             let window_weak = window_weak.clone();
             tokio::spawn(async move {
                 let enabled = tokio::task::spawn_blocking(startup_enabled)
@@ -349,7 +444,189 @@ pub fn run_app(
 
     {
         let window_weak = main_window.as_weak();
+        main_window.on_default_dir_edited(move |old_default_str, new_default_str| {
+            if let Some(window) = window_weak.upgrade() {
+                let new_trimmed = new_default_str.trim();
+                if !new_trimmed.is_empty() {
+                    update_category_defaults(
+                        &window,
+                        Path::new(old_default_str.trim()),
+                        Path::new(new_trimmed),
+                    );
+                }
+            }
+        });
+    }
+
+    {
+        let window_weak = main_window.as_weak();
+        main_window.on_browse_options_folder(move |cat_idx| {
+            if let Some(window) = window_weak.upgrade() {
+                let category = Category::from(cat_idx);
+                let current_str = window_category_dir(&window, category);
+                let start_dir =
+                    if !current_str.is_empty() && Path::new(current_str.as_str()).exists() {
+                        PathBuf::from(current_str.as_str())
+                    } else {
+                        let def = window_category_dir(&window, Category::General);
+                        if !def.is_empty() && Path::new(def.as_str()).exists() {
+                            PathBuf::from(def.as_str())
+                        } else {
+                            default_download_directory()
+                        }
+                    };
+
+                if let Some(folder) = rfd::FileDialog::new()
+                    .set_directory(&start_dir)
+                    .pick_folder()
+                {
+                    let folder_str: slint::SharedString = folder.to_string_lossy().as_ref().into();
+                    if category == Category::General {
+                        let old_default = window_category_dir(&window, Category::General);
+                        set_window_category_dir(&window, Category::General, folder_str);
+                        update_category_defaults(&window, Path::new(old_default.as_str()), &folder);
+                    } else {
+                        set_window_category_dir(&window, category, folder_str);
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let window_weak = main_window.as_weak();
+        main_window.on_reset_options_category_default(move |cat_idx| {
+            if let Some(window) = window_weak.upgrade() {
+                let category = Category::from(cat_idx);
+                if category == Category::General {
+                    let old_default = window_category_dir(&window, Category::General);
+                    let new_default = default_download_directory();
+                    set_window_category_dir(
+                        &window,
+                        Category::General,
+                        new_default.to_string_lossy().as_ref().into(),
+                    );
+                    update_category_defaults(
+                        &window,
+                        Path::new(old_default.as_str()),
+                        &new_default,
+                    );
+                } else {
+                    let default_dir =
+                        PathBuf::from(window_category_dir(&window, Category::General).as_str());
+                    let subfolder = SaveSettings::default_subfolder(&default_dir, category);
+                    set_window_category_dir(
+                        &window,
+                        category,
+                        subfolder.to_string_lossy().as_ref().into(),
+                    );
+                }
+            }
+        });
+    }
+
+    let download_history = Rc::new(slint::VecModel::<TableItem>::default());
+    // Downloads kept from earlier sessions are listed before the window is shown.
+    let history_store = Rc::new(RefCell::new(HistoryStore::load()));
+    {
+        let settings = save_settings.borrow();
+        download_history.set_vec(
+            history_store
+                .borrow()
+                .entries()
+                .iter()
+                .map(|entry| history_table_item(&settings, entry))
+                .collect::<Vec<_>>(),
+        );
+    }
+    main_window.set_sample_downloads(download_history.clone().into());
+    let history_tracker = Rc::new(RefCell::new(HistoryTracker::new(
+        history_store.borrow().next_id(),
+    )));
+    // Default sort: Date Added, newest first.
+    main_window.set_sort_column(3);
+    main_window.set_sort_ascending(false);
+    resort(&download_history, 3, false);
+
+    {
+        let window_weak = main_window.as_weak();
+        let save_settings = save_settings.clone();
+        let history_store = history_store.clone();
+        let download_history = download_history.clone();
         main_window.on_commit_options(move |enabled| {
+            if let Some(window) = window_weak.upgrade() {
+                let default_dir_raw = window_category_dir(&window, Category::General);
+                let default_dir_trimmed = default_dir_raw.trim();
+                let default_dir = if default_dir_trimmed.is_empty() {
+                    default_download_directory()
+                } else {
+                    PathBuf::from(default_dir_trimmed)
+                };
+
+                let mut new_settings = SaveSettings {
+                    default_dir: default_dir.clone(),
+                    ..Default::default()
+                };
+                for category in Category::ALL {
+                    if category == Category::General {
+                        continue;
+                    }
+                    new_settings.set_category_dir(
+                        category,
+                        SaveSettings::category_override(
+                            &window_category_dir(&window, category),
+                            &default_dir,
+                            category,
+                        ),
+                    );
+                    if let Some(extensions) = SaveSettings::file_type_override(
+                        category,
+                        window_category_file_types(&window, category).as_str(),
+                    ) {
+                        new_settings.file_types.insert(category, extensions);
+                    }
+                }
+
+                *save_settings.borrow_mut() = new_settings.clone();
+                window.set_dest_dir_text(default_dir.to_string_lossy().as_ref().into());
+
+                {
+                    let settings = save_settings.borrow();
+                    let store = history_store.borrow();
+                    download_history.set_vec(
+                        store
+                            .entries()
+                            .iter()
+                            .map(|entry| history_table_item(&settings, entry))
+                            .collect::<Vec<_>>(),
+                    );
+                    resort(
+                        &download_history,
+                        window.get_sort_column(),
+                        window.get_sort_ascending(),
+                    );
+                    update_selection_state(&window, window.get_selected_row());
+                }
+
+                let window_weak_save = window_weak.clone();
+                tokio::spawn(async move {
+                    let saved = tokio::task::spawn_blocking(move || new_settings.save()).await;
+                    let failure = match saved {
+                        Ok(result) => result.err().map(|error| error.to_string()),
+                        Err(error) => Some(error.to_string()),
+                    };
+                    if let Some(message) = failure {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(window) = window_weak_save.upgrade() {
+                                window.set_action_error_message(
+                                    format!("Could not save options: {message}").into(),
+                                );
+                            }
+                        });
+                    }
+                });
+            }
+
             let window_weak = window_weak.clone();
             tokio::spawn(async move {
                 let outcome = tokio::task::spawn_blocking(move || {
@@ -378,26 +655,6 @@ pub fn run_app(
             });
         });
     }
-
-    let download_history = Rc::new(slint::VecModel::<TableItem>::default());
-    // Downloads kept from earlier sessions are listed before the window is shown.
-    let history_store = Rc::new(RefCell::new(HistoryStore::load()));
-    download_history.set_vec(
-        history_store
-            .borrow()
-            .entries()
-            .iter()
-            .map(history_table_item)
-            .collect::<Vec<_>>(),
-    );
-    main_window.set_sample_downloads(download_history.clone().into());
-    let history_tracker = Rc::new(RefCell::new(HistoryTracker::new(
-        history_store.borrow().next_id(),
-    )));
-    // Default sort: Date Added, newest first.
-    main_window.set_sort_column(3);
-    main_window.set_sort_ascending(false);
-    resort(&download_history, 3, false);
 
     if let Some(widths) = TableColumnWidths::load() {
         main_window.set_col_filename_width(widths.filename);
@@ -445,31 +702,28 @@ pub fn run_app(
 
     {
         let window_weak = main_window.as_weak();
-        let store = history_store.clone();
         main_window.on_row_selected(move |id| {
             let Some(window) = window_weak.upgrade() else {
                 return;
             };
-            update_selection_state(&window, &store.borrow(), id);
+            update_selection_state(&window, id);
         });
     }
 
     {
         let window_weak = main_window.as_weak();
-        let store = history_store.clone();
         main_window.on_selected_category_changed(move || {
             if let Some(window) = window_weak.upgrade() {
-                update_selection_state(&window, &store.borrow(), window.get_selected_row());
+                update_selection_state(&window, window.get_selected_row());
             }
         });
     }
 
     {
         let window_weak = main_window.as_weak();
-        let store = history_store.clone();
         main_window.on_step_selection(move |step| {
             if let Some(window) = window_weak.upgrade() {
-                step_selection(&window, &store.borrow(), step);
+                step_selection(&window, step);
             }
         });
     }
@@ -488,9 +742,44 @@ pub fn run_app(
         let window_weak = main_window.as_weak();
         main_window.on_browse_folder(move || {
             if let Some(window) = window_weak.upgrade() {
-                let current = window.get_dest_dir_text().to_string();
-                if let Some(folder) = rfd::FileDialog::new().set_directory(&current).pick_folder() {
-                    window.set_dest_dir_text(folder.to_string_lossy().into_owned().into());
+                let current = window.get_dest_dir_text();
+                let current_str = current.as_str();
+                if let Some(folder) = rfd::FileDialog::new()
+                    .set_directory(current_str)
+                    .pick_folder()
+                {
+                    window.set_dest_dir_text(folder.to_string_lossy().as_ref().into());
+                }
+            }
+        });
+    }
+
+    {
+        let window_weak = main_window.as_weak();
+        let save_settings = save_settings.clone();
+        main_window.on_add_dialog_opened(move || {
+            if let Some(window) = window_weak.upgrade() {
+                let url = window.get_url_text();
+                let dir = save_settings.borrow().path_for_url(url.trim());
+                window.set_dest_dir_text(dir.to_string_lossy().as_ref().into());
+            }
+        });
+    }
+
+    {
+        let window_weak = main_window.as_weak();
+        let save_settings = save_settings.clone();
+        main_window.on_url_text_changed(move |new_url| {
+            if let Some(window) = window_weak.upgrade() {
+                let current_dest = window.get_dest_dir_text();
+                let current_path = Path::new(current_dest.as_str());
+                let settings = save_settings.borrow();
+                let matches_known =
+                    current_dest.is_empty() || settings.is_managed_path(current_path);
+
+                if matches_known {
+                    let target_dir = settings.path_for_url(new_url.trim());
+                    window.set_dest_dir_text(target_dir.to_string_lossy().as_ref().into());
                 }
             }
         });
@@ -498,7 +787,6 @@ pub fn run_app(
 
     {
         let tx = action_tx.clone();
-        let store = history_store.clone();
         let window_weak = main_window.as_weak();
         main_window.on_start_download(move || {
             if let Some(window) = window_weak.upgrade() {
@@ -518,7 +806,7 @@ pub fn run_app(
                     ) {
                         window.set_selected_row(0);
                         window.set_selected_category(0);
-                        update_selection_state(&window, &store.borrow(), 0);
+                        update_selection_state(&window, 0);
                     } else {
                         window.set_show_add_dialog(true);
                     }
@@ -758,6 +1046,7 @@ pub fn run_app(
         let tracker = history_tracker;
         let store = history_store;
         let history = download_history;
+        let save_settings = save_settings.clone();
         let mut rx = snapshot_rx;
         let mut initial_snapshot = true;
         timer.start(
@@ -777,7 +1066,7 @@ pub fn run_app(
                             );
                         }
                         // The finished download is listed at once, in the active sort's position.
-                        history.push(history_table_item(&entry));
+                        history.push(history_table_item(&save_settings.borrow(), &entry));
                         resort(
                             &history,
                             window.get_sort_column(),
@@ -787,7 +1076,7 @@ pub fn run_app(
                         // Keep the selection with the row that just moved into the list.
                         if window.get_selected_row() == 0 {
                             window.set_selected_row(entry.id);
-                            update_selection_state(&window, &store.borrow(), entry.id);
+                            update_selection_state(&window, entry.id);
                         }
                     }
 
@@ -813,7 +1102,7 @@ pub fn run_app(
                             PendingDelete::History { .. } => {}
                         }
                     }
-                    update_window_state(&window, &snap);
+                    update_window_state(&window, &save_settings.borrow(), &snap);
                     *displayed.borrow_mut() = projected_target;
                 }
             },
